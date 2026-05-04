@@ -1,0 +1,3 @@
+2026-05-03 23:24:25.957104-07:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLDataException: Value too long for column "content CHARACTER VARYING(255)": "U&'package com.pearprogram.rooms;\\000a\\000aimport org.springframework.web.bind.a... (585)"; SQL statement:
+insert into files (content,created_at,language,path,updated_at,workspace_id,id) values (?,?,?,?,?,?,?) [22001-232]

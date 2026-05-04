@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pearprogram}
+    username: ${SPRING_DATASOURCE_USERNAME:pear}
+    password: ${SPRING_DATASOURCE_PASSWORD:pear}
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+management:
+  health:
+    redis:
+      enabled: true

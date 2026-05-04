@@ -32,7 +32,7 @@ public class WorkspaceFile {
     @Column(nullable = false)
     private String language;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "text")
     private String content = "";
 
     @Column(name = "created_at", nullable = false)

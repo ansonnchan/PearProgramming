@@ -38,7 +38,7 @@ public class AiAnnotation {
     @Column(nullable = false)
     private int line;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "text")
     private String content;
 
     @Column(name = "created_at", nullable = false)

@@ -8,6 +8,9 @@ import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.Date;
+import java.util.UUID;
 
 @Service
 public class JwtService {
@@ -37,5 +40,18 @@ public class JwtService {
         } catch (RuntimeException ex) {
             return TokenValidationResponse.invalid();
         }
+    }
+
+    public String issueDevToken(String userId, String displayName) {
+        String subject = userId == null || userId.isBlank() ? UUID.randomUUID().toString() : userId;
+        String name = displayName == null || displayName.isBlank() ? "Guest" : displayName;
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .subject(subject)
+                .claim("name", name)
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(24 * 60 * 60)))
+                .signWith(key)
+                .compact();
     }
 }

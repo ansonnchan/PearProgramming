@@ -5,7 +5,6 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
-  FileCode2,
   FilePlus2,
   Folder,
   FolderPlus,
@@ -19,8 +18,20 @@ import SockJS from 'sockjs-client';
 import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
 import { WebsocketProvider } from 'y-websocket';
-import { bootstrapDemoRoom, getRoom, listFiles, STOMP_URL, YJS_URL } from './api';
-import type { ChatMessage, CursorMessage, Member, Room, WorkspaceFile } from './types';
+import {
+  bootstrapDemoRoom,
+  createFile,
+  dismissAnnotation,
+  getRoom,
+  issueDevToken,
+  importPlaceholderRepository,
+  listAnnotations,
+  listChatHistory,
+  listFiles,
+  STOMP_URL,
+  YJS_URL
+} from './api';
+import type { AiAnnotation, ChatMessage, CursorMessage, Member, Room, WorkspaceFile } from './types';
 
 const USER_COLORS = ['#378ADD', '#1D9E75', '#F59E0B', '#D946EF', '#EF4444'];
 
@@ -82,12 +93,15 @@ export default function App() {
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [annotations, setAnnotations] = useState<AiAnnotation[]>([]);
   const [cursors, setCursors] = useState<Record<string, CursorMessage>>({});
   const [stompClient, setStompClient] = useState<Client | null>(null);
   const [stompConnected, setStompConnected] = useState(false);
   const [syncStatus, setSyncStatus] = useState('Yjs offline');
   const [peerCount, setPeerCount] = useState(1);
   const [chatDraft, setChatDraft] = useState('');
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [cursorPosition, setCursorPosition] = useState({ line: 1, col: 1 });
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set(['src', 'src/main', 'src/main/java']));
 
   const user = useMemo(getOrCreateLocalUser, []);
@@ -103,6 +117,7 @@ export default function App() {
   const providerRef = useRef<WebsocketProvider | null>(null);
   const ydocRef = useRef<Y.Doc | null>(null);
   const cursorWidgetsRef = useRef<Map<string, any>>(new Map());
+  const annotationWidgetsRef = useRef<Map<string, any>>(new Map());
   const cursorSentAtRef = useRef(0);
   const roomRef = useRef<Room | null>(null);
   const activeFileRef = useRef<WorkspaceFile | null>(null);
@@ -119,6 +134,21 @@ export default function App() {
   useEffect(() => {
     stompRef.current = stompClient;
   }, [stompClient]);
+
+  useEffect(() => {
+    let cancelled = false;
+    issueDevToken(user.id, user.name)
+      .then((token) => {
+        if (!cancelled) {
+          setAuthToken(token);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user.id, user.name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,7 +203,51 @@ export default function App() {
       return;
     }
 
+    let cancelled = false;
+    listChatHistory(room.code)
+      .then((history) => {
+        if (!cancelled) {
+          setMessages(history);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [room]);
+
+  useEffect(() => {
+    if (!room || !activeFile || !isUuid(activeFile.id)) {
+      setAnnotations([]);
+      return;
+    }
+
+    let cancelled = false;
+    listAnnotations(room.code, activeFile.id)
+      .then((items) => {
+        if (!cancelled) {
+          setAnnotations(items);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAnnotations([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFile, room]);
+
+  useEffect(() => {
+    if (!room) {
+      return;
+    }
+
     const client = new Client({
+      connectHeaders: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       reconnectDelay: 2000,
       webSocketFactory: () => new SockJS(STOMP_URL),
       onConnect: () => {
@@ -198,6 +272,10 @@ export default function App() {
             });
           }
         });
+        client.subscribe(`/topic/room/${room.code}/annotations`, (message: IMessage) => {
+          const annotation = JSON.parse(message.body) as AiAnnotation;
+          setAnnotations((current) => upsertAnnotation(current, annotation).slice(-5));
+        });
         client.publish({
           destination: `/app/room/${room.code}/members`,
           body: JSON.stringify({ type: 'joined', userId: user.id, displayName: user.name, color: user.color, at: new Date().toISOString() })
@@ -221,7 +299,7 @@ export default function App() {
       setStompConnected(false);
       setStompClient(null);
     };
-  }, [room, user.color, user.id, user.name]);
+  }, [authToken, room, user.color, user.id, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -234,7 +312,7 @@ export default function App() {
     ydocRef.current?.destroy();
 
     const ydoc = new Y.Doc();
-    const provider = new WebsocketProvider(YJS_URL, `${room.code}/${activeFile.id}`, ydoc);
+    const provider = new WebsocketProvider(YJS_URL, `${room.code}/${activeFile.id}`, ydoc, authToken ? { params: { token: authToken } } : undefined);
     const yText = ydoc.getText('monaco');
     if (yText.length === 0 && activeFile.content) {
       yText.insert(0, activeFile.content);
@@ -261,7 +339,7 @@ export default function App() {
       provider.destroy();
       ydoc.destroy();
     };
-  }, [activeFile, room, user.color, user.name]);
+  }, [activeFile, authToken, room, user.color, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -296,6 +374,56 @@ export default function App() {
     return () => clearCursorWidgets(editor);
   }, [activeFile, cursors, user.id]);
 
+  useEffect(() => {
+    const editor = editorRef.current as any;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco || !activeFile) {
+      return;
+    }
+
+    clearAnnotationWidgets(editor);
+    for (const annotation of annotations.filter((item) => item.fileId === activeFile.id)) {
+      const node = document.createElement('div');
+      node.className = 'ai-annotation-widget';
+
+      const header = document.createElement('div');
+      header.className = 'ai-annotation-header';
+      header.textContent = `AI - line ${annotation.line}`;
+
+      const close = document.createElement('button');
+      close.className = 'ai-annotation-close';
+      close.type = 'button';
+      close.textContent = 'x';
+      close.title = 'Dismiss annotation';
+      close.addEventListener('click', () => {
+        setAnnotations((current) => current.filter((item) => item.id !== annotation.id));
+        if (isUuid(annotation.id)) {
+          void dismissAnnotation(annotation.id).catch(() => undefined);
+        }
+      });
+
+      const body = document.createElement('p');
+      body.textContent = annotation.content;
+
+      header.appendChild(close);
+      node.appendChild(header);
+      node.appendChild(body);
+
+      const widget = {
+        getId: () => `ai-annotation-${annotation.id}`,
+        getDomNode: () => node,
+        getPosition: () => ({
+          position: { lineNumber: Math.max(1, annotation.line), column: 1 },
+          preference: [monaco.editor.ContentWidgetPositionPreference.BELOW]
+        })
+      };
+      editor.addContentWidget(widget);
+      annotationWidgetsRef.current.set(annotation.id, widget);
+    }
+
+    return () => clearAnnotationWidgets(editor);
+  }, [activeFile, annotations]);
+
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
@@ -314,6 +442,7 @@ export default function App() {
     monaco.editor.setTheme('pear-github-dark');
 
     editor.onDidChangeCursorPosition((event) => {
+      setCursorPosition({ line: event.position.lineNumber, col: event.position.column });
       const now = Date.now();
       if (now - cursorSentAtRef.current < 50) {
         return;
@@ -349,9 +478,19 @@ export default function App() {
     if (stompClient?.connected) {
       stompClient.publish({
         destination: `/app/room/${room.code}/chat`,
-        body: JSON.stringify({ userId: user.id, displayName: user.name, content })
+        body: JSON.stringify({
+          userId: user.id,
+          displayName: user.name,
+          content,
+          currentFileId: activeFile?.id,
+          currentFile: activeFile?.path,
+          currentLine: cursorPosition.line
+        })
       });
     } else {
+      const localAiAnnotation = content.toUpperCase().includes('@AI') && activeFile
+        ? createLocalAnnotation(activeFile.id, cursorPosition.line, user.name)
+        : null;
       setMessages((current) => [
         ...current,
         {
@@ -367,16 +506,19 @@ export default function App() {
               id: crypto.randomUUID(),
               userId: null,
               displayName: 'AI',
-              content: 'AI is unavailable, try again',
+              content: `Placeholder AI: I can see ${activeFile?.path ?? 'the active file'} and your cursor near line ${cursorPosition.line}. I would use recent diffs and room cursors before giving a concrete suggestion.`,
               ai: true,
               createdAt: new Date().toISOString()
             }]
           : [])
       ].slice(-60));
+      if (localAiAnnotation) {
+        setAnnotations((current) => upsertAnnotation(current, localAiAnnotation).slice(-5));
+      }
     }
 
     setChatDraft('');
-  }, [chatDraft, room, stompClient, user.id, user.name]);
+  }, [activeFile, chatDraft, cursorPosition.line, room, stompClient, user.id, user.name]);
 
   const copyRoomLink = useCallback(() => {
     if (!room) {
@@ -385,6 +527,78 @@ export default function App() {
     void navigator.clipboard.writeText(`${window.location.origin}/join/${room.code}`);
   }, [room]);
 
+  const handleNewFile = useCallback(async () => {
+    if (!room) {
+      return;
+    }
+
+    const path = window.prompt('New file path', 'src/main/java/NewFile.java')?.trim();
+    if (!path) {
+      return;
+    }
+
+    try {
+      const created = await createFile(room.workspaceId, path);
+      setFiles((current) => [...current.filter((file) => file.id !== created.id), created].sort(sortByPath));
+      setActiveFileId(created.id);
+      expandForPath(path);
+    } catch {
+      const local = createLocalFile(path);
+      setFiles((current) => [...current, local].sort(sortByPath));
+      setActiveFileId(local.id);
+      expandForPath(path);
+    }
+  }, [room]);
+
+  const handleNewFolder = useCallback(async () => {
+    if (!room) {
+      return;
+    }
+
+    const path = window.prompt('New folder path', 'src/main/java/newfolder')?.trim();
+    if (!path) {
+      return;
+    }
+
+    const markerPath = `${path.replace(/\/$/, '')}/.gitkeep`;
+    try {
+      const created = await createFile(room.workspaceId, markerPath);
+      setFiles((current) => [...current.filter((file) => file.id !== created.id), created].sort(sortByPath));
+      setActiveFileId(created.id);
+      expandForPath(markerPath);
+    } catch {
+      const local = createLocalFile(markerPath);
+      setFiles((current) => [...current, local].sort(sortByPath));
+      setActiveFileId(local.id);
+      expandForPath(markerPath);
+    }
+  }, [room]);
+
+  const handleImportGitHub = useCallback(async () => {
+    if (!room) {
+      return;
+    }
+
+    const repoInput = window.prompt('GitHub repo', 'sample-org/pearprogram-import')?.trim();
+    if (!repoInput) {
+      return;
+    }
+    const [owner = 'sample-org', repo = 'pearprogram-import'] = repoInput.split('/');
+    const branch = window.prompt('Branch', 'main')?.trim() || 'main';
+
+    try {
+      const imported = await importPlaceholderRepository(room.workspaceId, owner, repo, branch);
+      setFiles((current) => mergeFiles(current, imported.files).sort(sortByPath));
+      setActiveFileId(imported.files[0]?.id ?? activeFileId);
+      imported.files.forEach((file) => expandForPath(file.path));
+    } catch {
+      const imported = createLocalGitHubFiles(owner, repo, branch);
+      setFiles((current) => mergeFiles(current, imported).sort(sortByPath));
+      setActiveFileId(imported[0]?.id ?? activeFileId);
+      imported.forEach((file) => expandForPath(file.path));
+    }
+  }, [activeFileId, room]);
+
   function toggleFolder(path: string) {
     setExpandedFolders((current) => {
       const next = new Set(current);
@@ -392,6 +606,19 @@ export default function App() {
         next.delete(path);
       } else {
         next.add(path);
+      }
+      return next;
+    });
+  }
+
+  function expandForPath(path: string) {
+    const parts = path.split('/').filter(Boolean);
+    setExpandedFolders((current) => {
+      const next = new Set(current);
+      let folder = '';
+      for (let index = 0; index < parts.length - 1; index += 1) {
+        folder = folder ? `${folder}/${parts[index]}` : parts[index];
+        next.add(folder);
       }
       return next;
     });
@@ -429,15 +656,15 @@ export default function App() {
           <div className="pane-title-row">
             <span className="pane-title">Explorer</span>
             <div className="icon-row">
-              <button className="icon-button" type="button" title="New file">
+              <button className="icon-button" onClick={handleNewFile} type="button" title="New file">
                 <FilePlus2 size={15} />
               </button>
-              <button className="icon-button" type="button" title="New folder">
+              <button className="icon-button" onClick={handleNewFolder} type="button" title="New folder">
                 <FolderPlus size={15} />
               </button>
             </div>
           </div>
-          <button className="github-button" type="button">
+          <button className="github-button" onClick={handleImportGitHub} type="button">
             <Github size={15} />
             <span>Import from GitHub</span>
           </button>
@@ -527,12 +754,12 @@ export default function App() {
 
       <footer className="statusbar">
         <span className="status-pill">{activeFile?.language ?? 'plaintext'}</span>
-        <span>Ln 1, Col 1</span>
+        <span>Ln {cursorPosition.line}, Col {cursorPosition.col}</span>
         <span className="sync-status">
           {stompConnected ? <Wifi size={13} /> : <WifiOff size={13} />}
-          {syncStatus} · {peerCount} peers
+          {syncStatus} - {peerCount} peers
         </span>
-        <span className="encoding">UTF-8 · LF</span>
+        <span className="encoding">UTF-8 - LF</span>
       </footer>
     </main>
   );
@@ -542,6 +769,13 @@ export default function App() {
       editor.removeContentWidget(widget);
     }
     cursorWidgetsRef.current.clear();
+  }
+
+  function clearAnnotationWidgets(editor: any) {
+    for (const widget of annotationWidgetsRef.current.values()) {
+      editor.removeContentWidget(widget);
+    }
+    annotationWidgetsRef.current.clear();
   }
 }
 
@@ -697,6 +931,97 @@ function relativeTime(value: string) {
     return 'now';
   }
   return `${minutes}m`;
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function upsertAnnotation(current: AiAnnotation[], annotation: AiAnnotation) {
+  return [...current.filter((item) => item.id !== annotation.id), annotation];
+}
+
+function createLocalAnnotation(fileId: string, line: number, userName: string): AiAnnotation {
+  return {
+    id: crypto.randomUUID(),
+    fileId,
+    roomCode: FALLBACK_ROOM.code,
+    triggeredBy: userName,
+    line: Math.max(1, line),
+    content: `${userName} is working near line ${Math.max(1, line)}. Placeholder AI would compare this against recent diffs before making a concrete suggestion.`,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function createLocalFile(path: string): WorkspaceFile {
+  return {
+    id: crypto.randomUUID(),
+    workspaceId: FALLBACK_ROOM.workspaceId,
+    path,
+    language: inferLanguage(path),
+    content: '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function createLocalGitHubFiles(owner: string, repo: string, branch: string): WorkspaceFile[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: crypto.randomUUID(),
+      workspaceId: FALLBACK_ROOM.workspaceId,
+      path: `${repo}/README.md`,
+      language: 'markdown',
+      content: `# ${repo}\n\nPlaceholder GitHub import from ${owner}/${repo}@${branch}.\n`,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: crypto.randomUUID(),
+      workspaceId: FALLBACK_ROOM.workspaceId,
+      path: `${repo}/src/ImportedEditor.tsx`,
+      language: 'typescript',
+      content: `export function ImportedEditor() {\n  return <section>PearProgram imported this placeholder file from GitHub.</section>;\n}\n`,
+      createdAt: now,
+      updatedAt: now
+    }
+  ];
+}
+
+function mergeFiles(current: WorkspaceFile[], incoming: WorkspaceFile[]) {
+  const byPath = new Map<string, WorkspaceFile>();
+  for (const file of current) {
+    byPath.set(file.path, file);
+  }
+  for (const file of incoming) {
+    byPath.set(file.path, file);
+  }
+  return [...byPath.values()];
+}
+
+function sortByPath(a: WorkspaceFile, b: WorkspaceFile) {
+  return a.path.localeCompare(b.path);
+}
+
+function inferLanguage(path: string) {
+  const lower = path.toLowerCase();
+  if (lower.endsWith('.java')) {
+    return 'java';
+  }
+  if (lower.endsWith('.ts') || lower.endsWith('.tsx')) {
+    return 'typescript';
+  }
+  if (lower.endsWith('.js') || lower.endsWith('.jsx')) {
+    return 'javascript';
+  }
+  if (lower.endsWith('.py')) {
+    return 'python';
+  }
+  if (lower.endsWith('.md')) {
+    return 'markdown';
+  }
+  return 'plaintext';
 }
 
 function hash(value: string) {

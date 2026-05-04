@@ -30,7 +30,7 @@ public class ChatMessage {
     @JoinColumn(name = "user_id")
     private AppUser user;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "text")
     private String content;
 
     @Column(name = "is_ai", nullable = false)

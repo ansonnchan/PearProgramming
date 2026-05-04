@@ -348,6 +348,45 @@ button {
   pointer-events: none;
 }
 
+.ai-annotation-widget {
+  width: min(280px, 46vw);
+  padding: 8px 9px;
+  border: 1px solid #c9c3ff;
+  border-radius: 7px;
+  background: #eeedfe;
+  color: #342267;
+  box-shadow: 0 8px 26px rgb(0 0 0 / 32%);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ai-annotation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #6d28d9;
+}
+
+.ai-annotation-close {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid #c4b5fd;
+  border-radius: 5px;
+  background: #f8f7ff;
+  color: #6d28d9;
+  line-height: 1;
+}
+
+.ai-annotation-widget p {
+  margin: 0;
+}
+
 .messages {
   display: flex;
   flex-direction: column;

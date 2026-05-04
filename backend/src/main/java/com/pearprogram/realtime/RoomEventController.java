@@ -1,6 +1,8 @@
 package com.pearprogram.realtime;
 
 import com.pearprogram.ai.AiParticipantService;
+import com.pearprogram.ai.AiAnnotationDto;
+import com.pearprogram.ai.AiAnnotationService;
 import com.pearprogram.chat.ChatMessage;
 import com.pearprogram.chat.ChatMessageRepository;
 import com.pearprogram.rooms.Room;
@@ -17,6 +19,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Controller
 public class RoomEventController {
@@ -24,6 +27,7 @@ public class RoomEventController {
     private final RoomRepository roomRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final AiParticipantService aiParticipantService;
+    private final AiAnnotationService aiAnnotationService;
     private final MeterRegistry meterRegistry;
 
     public RoomEventController(
@@ -31,12 +35,14 @@ public class RoomEventController {
             RoomRepository roomRepository,
             ChatMessageRepository chatMessageRepository,
             AiParticipantService aiParticipantService,
+            AiAnnotationService aiAnnotationService,
             MeterRegistry meterRegistry
     ) {
         this.messagingTemplate = messagingTemplate;
         this.roomRepository = roomRepository;
         this.chatMessageRepository = chatMessageRepository;
         this.aiParticipantService = aiParticipantService;
+        this.aiAnnotationService = aiAnnotationService;
         this.meterRegistry = meterRegistry;
     }
 
@@ -57,7 +63,7 @@ public class RoomEventController {
         ));
 
         if (inbound.content() != null && inbound.content().toUpperCase().contains("@AI")) {
-            ChatMessage aiMessage = persistChat(room, aiParticipantService.fallbackUnavailableMessage(), true);
+            ChatMessage aiMessage = persistChat(room, aiParticipantService.chatResponse(inbound.displayName(), inbound.currentFile()), true);
             messagingTemplate.convertAndSend("/topic/room/" + code + "/chat", new ChatOutboundMessage(
                     aiMessage.getId(),
                     null,
@@ -66,6 +72,7 @@ public class RoomEventController {
                     true,
                     aiMessage.getCreatedAt()
             ));
+            maybeCreatePlaceholderAnnotation(room, inbound);
         }
     }
 
@@ -107,5 +114,27 @@ public class RoomEventController {
                 .tag("room", code)
                 .register(meterRegistry)
                 .increment();
+    }
+
+    private void maybeCreatePlaceholderAnnotation(Room room, ChatInboundMessage inbound) {
+        if (inbound.currentFileId() == null || inbound.currentFileId().isBlank()) {
+            return;
+        }
+
+        try {
+            UUID fileId = UUID.fromString(inbound.currentFileId());
+            int line = inbound.currentLine() == null || inbound.currentLine() < 1 ? 1 : inbound.currentLine();
+            AiAnnotationDto annotation = aiAnnotationService.createPlaceholderAnnotation(
+                    room,
+                    fileId,
+                    line,
+                    inbound.displayName()
+            );
+            if (annotation != null) {
+                messagingTemplate.convertAndSend("/topic/room/" + room.getCode() + "/annotations", annotation);
+            }
+        } catch (IllegalArgumentException ignored) {
+            // Local fallback file ids are not UUIDs, so the frontend handles placeholder annotations itself.
+        }
     }
 }

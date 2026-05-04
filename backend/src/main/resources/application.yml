@@ -2,19 +2,24 @@ spring:
   application:
     name: pearprogram-backend
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pearprogram}
-    username: ${SPRING_DATASOURCE_USERNAME:pear}
-    password: ${SPRING_DATASOURCE_PASSWORD:pear}
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:file:./data/pearprogram;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH}
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER:org.h2.Driver}
   data:
     redis:
       host: ${SPRING_REDIS_HOST:localhost}
       port: ${SPRING_REDIS_PORT:6379}
       timeout: 750ms
   flyway:
-    enabled: true
+    enabled: ${SPRING_FLYWAY_ENABLED:false}
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:create}
     open-in-view: false
     properties:
       hibernate:
@@ -30,6 +35,8 @@ pearprogram:
     ttl-hours: 24
   yjs:
     server-url: ${YJS_SERVER_URL:ws://localhost:1234}
+  ai:
+    placeholder-mode: ${PEARPROGRAM_AI_PLACEHOLDER:true}
 
 management:
   endpoints:
@@ -40,6 +47,9 @@ management:
     health:
       probes:
         enabled: true
+  health:
+    redis:
+      enabled: ${SPRING_REDIS_HEALTH_ENABLED:false}
   metrics:
     tags:
       application: pearprogram-backend

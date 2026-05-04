@@ -38,6 +38,16 @@ export type ChatMessage = {
   createdAt: string;
 };
 
+export type AiAnnotation = {
+  id: string;
+  fileId: string;
+  roomCode: string;
+  triggeredBy: string | null;
+  line: number;
+  content: string;
+  createdAt: string;
+};
+
 export type CursorMessage = {
   userId: string;
   displayName: string;
@@ -53,4 +63,11 @@ export type Member = {
   name: string;
   color: string;
   ai?: boolean;
+};
+
+export type GitHubImportResponse = {
+  owner: string;
+  repo: string;
+  branch: string;
+  files: WorkspaceFile[];
 };
