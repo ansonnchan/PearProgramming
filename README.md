@@ -1,1 +1,50 @@
-# PearProgramming
+# PearProgram
+
+PearProgram is a production-grade portfolio project for a browser-based collaborative code editor. It uses a split real-time architecture:
+
+- Spring Boot owns auth, rooms, metadata, chat, cursors, presence, AI proxying, persistence, and metrics.
+- A separate Node `y-websocket` service owns Yjs CRDT document synchronization.
+- React, Monaco, Yjs, SockJS/STOMP, Zustand, and Tailwind power the browser app.
+
+## Repository Layout
+
+```text
+backend/   Spring Boot API, WebSocket/STOMP, JPA, Flyway, Redis, metrics
+realtime/  Node y-websocket service with JWT validation and snapshot flushing
+frontend/  Vite + React + TypeScript + Monaco collaborative editor UI
+```
+
+## Local Prerequisites
+
+- Java 21
+- Maven 3.9+
+- Node 20+
+- npm 10+
+- Docker Desktop, for PostgreSQL and Redis
+
+## Quick Start
+
+```powershell
+docker compose up -d
+
+cd backend
+mvn spring-boot:run
+
+cd ../realtime
+npm install
+npm run dev
+
+cd ../frontend
+npm install
+npm run dev
+```
+
+Default local endpoints:
+
+- Frontend: `http://localhost:5173`
+- Spring API/STOMP: `http://localhost:8080`
+- Node Yjs WebSocket: `ws://localhost:1234`
+
+## Architecture Notes
+
+Yjs document edits flow only through the Node service. Spring handles STOMP events for chat, cursors, and presence. PostgreSQL stores durable snapshots and metadata, while Redis stores ephemeral room/session state with 24h TTL.

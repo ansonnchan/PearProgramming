@@ -1,0 +1,19 @@
+{
+  "name": "@pearprogram/realtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PearProgram Node y-websocket sync service",
+  "main": "src/server.cjs",
+  "scripts": {
+    "dev": "node src/server.cjs",
+    "start": "node src/server.cjs",
+    "lint": "node --check src/server.cjs"
+  },
+  "dependencies": {
+    "ioredis": "5.4.1",
+    "ws": "8.18.0",
+    "y-websocket": "1.5.4",
+    "yjs": "13.6.20"
+  },
+  "devDependencies": {}
+}

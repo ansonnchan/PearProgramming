@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: pearprogram-backend
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pearprogram}
+    username: ${SPRING_DATASOURCE_USERNAME:pear}
+    password: ${SPRING_DATASOURCE_PASSWORD:pear}
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+      timeout: 750ms
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+server:
+  port: 8080
+
+pearprogram:
+  jwt:
+    secret: ${JWT_SECRET:dev-only-change-me-dev-only-change-me}
+  rooms:
+    ttl-hours: 24
+  yjs:
+    server-url: ${YJS_SERVER_URL:ws://localhost:1234}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: pearprogram-backend
+
+logging:
+  level:
+    com.pearprogram: INFO
