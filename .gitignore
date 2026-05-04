@@ -16,8 +16,11 @@ backend/target/
 
 # Node
 node_modules/
+*.tsbuildinfo
 frontend/dist/
 frontend/.vite/
+frontend/vite.config.d.ts
+frontend/vite.config.js
 realtime/.cache/
 
 # Env

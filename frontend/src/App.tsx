@@ -673,7 +673,8 @@ function initials(name: string) {
 }
 
 function basename(path: string) {
-  return path.split('/').at(-1) ?? path;
+  const parts = path.split('/');
+  return parts[parts.length - 1] ?? path;
 }
 
 function languageClass(language: string) {
