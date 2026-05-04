@@ -10,4 +10,6 @@ public interface AiAnnotationRepository extends JpaRepository<AiAnnotation, UUID
     boolean existsByFile_IdAndLineAndCreatedAtAfterAndDismissedAtIsNull(UUID fileId, int line, OffsetDateTime since);
 
     List<AiAnnotation> findTop5ByFile_IdAndRoom_CodeAndDismissedAtIsNullOrderByCreatedAtDesc(UUID fileId, String roomCode);
+
+    void deleteByFile_Workspace_Id(UUID workspaceId);
 }

@@ -1,5 +1,6 @@
 package com.pearprogram.files;
 
+import com.pearprogram.ai.AiAnnotationRepository;
 import com.pearprogram.workspaces.Workspace;
 import com.pearprogram.workspaces.WorkspaceRepository;
 import jakarta.transaction.Transactional;
@@ -16,10 +17,16 @@ import java.util.UUID;
 public class FileService {
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceFileRepository fileRepository;
+    private final AiAnnotationRepository aiAnnotationRepository;
 
-    public FileService(WorkspaceRepository workspaceRepository, WorkspaceFileRepository fileRepository) {
+    public FileService(
+            WorkspaceRepository workspaceRepository,
+            WorkspaceFileRepository fileRepository,
+            AiAnnotationRepository aiAnnotationRepository
+    ) {
         this.workspaceRepository = workspaceRepository;
         this.fileRepository = fileRepository;
+        this.aiAnnotationRepository = aiAnnotationRepository;
     }
 
     public List<FileDto> listFiles(UUID workspaceId) {
@@ -52,6 +59,7 @@ public class FileService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Workspace not found"));
 
         if (request.replaceExisting()) {
+            aiAnnotationRepository.deleteByFile_Workspace_Id(workspaceId);
             fileRepository.deleteByWorkspaceId(workspaceId);
             fileRepository.flush();
         }
