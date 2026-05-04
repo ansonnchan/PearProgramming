@@ -10,4 +10,6 @@ public interface WorkspaceFileRepository extends JpaRepository<WorkspaceFile, UU
     List<WorkspaceFile> findByWorkspaceIdOrderByPathAsc(UUID workspaceId);
 
     Optional<WorkspaceFile> findByWorkspaceIdAndPath(UUID workspaceId, String path);
+
+    void deleteByWorkspaceId(UUID workspaceId);
 }

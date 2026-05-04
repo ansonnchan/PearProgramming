@@ -29,6 +29,11 @@ public class FileController {
         return fileService.createFile(workspaceId, request);
     }
 
+    @PostMapping("/api/workspaces/{workspaceId}/files/batch")
+    public List<FileDto> createBatch(@PathVariable UUID workspaceId, @Valid @RequestBody BatchCreateFilesRequest request) {
+        return fileService.createFiles(workspaceId, request);
+    }
+
     @GetMapping("/api/files/{fileId}")
     public FileDto get(@PathVariable UUID fileId) {
         return fileService.getFile(fileId);

@@ -86,6 +86,11 @@ public class RoomEventController {
         messagingTemplate.convertAndSend("/topic/room/" + code + "/members", event);
     }
 
+    @MessageMapping("/room/{code}/project-switch")
+    public void projectSwitch(@DestinationVariable String code, ProjectSwitchEvent event) {
+        messagingTemplate.convertAndSend("/topic/room/" + code + "/project-switch", event);
+    }
+
     @MessageMapping("/room/{code}/ping")
     public void ping(@DestinationVariable String code, PingMessage ping) {
         long now = System.currentTimeMillis();

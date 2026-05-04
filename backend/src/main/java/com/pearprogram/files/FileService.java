@@ -7,7 +7,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -42,6 +44,43 @@ public class FileService {
         file.setLanguage(request.language() == null || request.language().isBlank() ? inferLanguage(request.path()) : request.language());
         file.setContent(request.content() == null ? "" : request.content());
         return FileDto.from(fileRepository.save(file));
+    }
+
+    @Transactional
+    public List<FileDto> createFiles(UUID workspaceId, BatchCreateFilesRequest request) {
+        Workspace workspace = workspaceRepository.findById(workspaceId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Workspace not found"));
+
+        if (request.replaceExisting()) {
+            fileRepository.deleteByWorkspaceId(workspaceId);
+            fileRepository.flush();
+        }
+
+        Map<String, CreateFileRequest> byPath = new LinkedHashMap<>();
+        for (CreateFileRequest fileRequest : request.files()) {
+            String normalizedPath = normalizePath(fileRequest.path());
+            if (!normalizedPath.isBlank()) {
+                byPath.put(normalizedPath, new CreateFileRequest(
+                        normalizedPath,
+                        fileRequest.language(),
+                        fileRequest.content()
+                ));
+            }
+        }
+
+        for (CreateFileRequest fileRequest : byPath.values()) {
+            WorkspaceFile file = fileRepository.findByWorkspaceIdAndPath(workspaceId, fileRequest.path())
+                    .orElseGet(WorkspaceFile::new);
+            file.setWorkspace(workspace);
+            file.setPath(fileRequest.path());
+            file.setLanguage(fileRequest.language() == null || fileRequest.language().isBlank()
+                    ? inferLanguage(fileRequest.path())
+                    : fileRequest.language());
+            file.setContent(fileRequest.content() == null ? "" : fileRequest.content());
+            fileRepository.save(file);
+        }
+
+        return listFiles(workspaceId);
     }
 
     public FileDto getFile(UUID fileId) {
@@ -96,6 +135,35 @@ public class FileService {
         if (lower.endsWith(".py")) {
             return "python";
         }
+        if (lower.endsWith(".c") || lower.endsWith(".h")) {
+            return "c";
+        }
+        if (lower.endsWith(".cpp") || lower.endsWith(".cc") || lower.endsWith(".cxx")
+                || lower.endsWith(".hpp") || lower.endsWith(".hh") || lower.endsWith(".hxx")) {
+            return "cpp";
+        }
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+            return "html";
+        }
+        if (lower.endsWith(".css")) {
+            return "css";
+        }
+        if (lower.endsWith(".json")) {
+            return "json";
+        }
+        if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+            return "markdown";
+        }
+        if (lower.endsWith(".sql")) {
+            return "sql";
+        }
         return "plaintext";
+    }
+
+    private String normalizePath(String path) {
+        return path.replace('\\', '/')
+                .replaceAll("/+", "/")
+                .replaceAll("^/+", "")
+                .trim();
     }
 }

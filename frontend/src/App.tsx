@@ -2,76 +2,57 @@ import Editor, { type OnMount } from '@monaco-editor/react';
 import { Client, type IMessage } from '@stomp/stompjs';
 import {
   Bot,
+  Check,
   ChevronDown,
   ChevronRight,
   Copy,
   FilePlus2,
   Folder,
   FolderPlus,
-  Github,
+  ImagePlus,
+  LogIn,
+  MessageSquare,
   Send,
+  Upload,
+  UserRound,
   Wifi,
-  WifiOff
+  WifiOff,
+  X
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import SockJS from 'sockjs-client';
 import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
 import { WebsocketProvider } from 'y-websocket';
 import {
-  bootstrapDemoRoom,
   createFile,
+  createRoom,
+  createWorkspace,
   dismissAnnotation,
   getRoom,
   issueDevToken,
-  importPlaceholderRepository,
   listAnnotations,
   listChatHistory,
   listFiles,
   STOMP_URL,
+  updateFileContent,
+  uploadWorkspaceFiles,
   YJS_URL
 } from './api';
-import type { AiAnnotation, ChatMessage, CursorMessage, Member, Room, WorkspaceFile } from './types';
+import { inferLanguage, languageClass } from './language';
+import type { UploadCandidate } from './uploads';
+import { projectNameForPaths, readUploadCandidates } from './uploads';
+import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, WorkspaceFile } from './types';
 
 const USER_COLORS = ['#378ADD', '#1D9E75', '#F59E0B', '#D946EF', '#EF4444'];
 
 const FALLBACK_ROOM: Room = {
   id: 'local-room',
-  code: 'XK7-29F',
+  code: 'LOCAL1',
   workspaceId: 'local-workspace',
   active: true,
   createdAt: new Date().toISOString(),
   expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-};
-
-const FALLBACK_FILE: WorkspaceFile = {
-  id: 'local-room-controller',
-  workspaceId: 'local-workspace',
-  path: 'src/main/java/RoomController.java',
-  language: 'java',
-  content: `package com.pearprogram.rooms;
-
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-@RestController
-@RequestMapping("/api/rooms")
-public class RoomController {
-    private final RoomService roomService;
-
-    public RoomController(RoomService roomService) {
-        this.roomService = roomService;
-    }
-
-    @PostMapping
-    public RoomDto createRoom(CreateRoomRequest request) {
-        return roomService.createRoom(request.workspaceId());
-    }
-}
-`,
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString()
 };
 
 type TreeNode = {
@@ -88,6 +69,18 @@ type MutableTreeNode = {
   file?: WorkspaceFile;
 };
 
+type PendingSwitch = {
+  proposalId: string;
+  currentFolder: string;
+  newFolder: string;
+  proposerId: string;
+  proposerName: string;
+  requiredUserIds: string[];
+  approvedUserIds: string[];
+};
+
+type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
+
 export default function App() {
   const [room, setRoom] = useState<Room | null>(null);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
@@ -95,6 +88,7 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [annotations, setAnnotations] = useState<AiAnnotation[]>([]);
   const [cursors, setCursors] = useState<Record<string, CursorMessage>>({});
+  const [presenceMembers, setPresenceMembers] = useState<Record<string, Member>>({});
   const [stompClient, setStompClient] = useState<Client | null>(null);
   const [stompConnected, setStompConnected] = useState(false);
   const [syncStatus, setSyncStatus] = useState('Yjs offline');
@@ -102,14 +96,28 @@ export default function App() {
   const [chatDraft, setChatDraft] = useState('');
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [cursorPosition, setCursorPosition] = useState({ line: 1, col: 1 });
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set(['src', 'src/main', 'src/main/java']));
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  const [landingCode, setLandingCode] = useState('');
+  const [landingError, setLandingError] = useState('');
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [joiningRoom, setJoiningRoom] = useState(false);
+  const [chatOpen, setChatOpen] = useState(true);
+  const [pacificNow, setPacificNow] = useState(() => new Date());
+  const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileDraftName, setProfileDraftName] = useState('');
+  const [profileDraftAvatar, setProfileDraftAvatar] = useState<string | undefined>();
+  const [user, setUser] = useState<Member>(() => getOrCreateLocalUser());
 
-  const user = useMemo(getOrCreateLocalUser, []);
   const activeFile = files.find((file) => file.id === activeFileId) ?? files[0] ?? null;
+  const activeProjectName = files.length > 0 ? projectNameForPaths(files.map((file) => file.path)) : 'Empty room';
   const remoteMembers = Object.values(cursors)
     .filter((cursor) => cursor.userId !== user.id)
     .map<Member>((cursor) => ({ id: cursor.userId, name: cursor.displayName, color: cursor.color }));
-  const members = uniqueMembers([user, ...remoteMembers, { id: 'ai', name: 'AI', color: '#8B5CF6', ai: true }]);
+  const humanMembers = uniqueMembers([user, ...Object.values(presenceMembers), ...remoteMembers]);
+  const members = uniqueMembers([...humanMembers, { id: 'ai', name: 'AI', color: '#8B5CF6', ai: true }]);
 
   const editorRef = useRef<unknown>(null);
   const monacoRef = useRef<any>(null);
@@ -119,9 +127,133 @@ export default function App() {
   const cursorWidgetsRef = useRef<Map<string, any>>(new Map());
   const annotationWidgetsRef = useRef<Map<string, any>>(new Map());
   const cursorSentAtRef = useRef(0);
+  const saveTimerRef = useRef<number | null>(null);
+  const pendingUploadRef = useRef<{ proposalId: string; candidates: UploadCandidate[]; newFolder: string } | null>(null);
+  const committingProposalRef = useRef<string | null>(null);
   const roomRef = useRef<Room | null>(null);
   const activeFileRef = useRef<WorkspaceFile | null>(null);
   const stompRef = useRef<Client | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+
+  const joinRoom = useCallback(async (rawCode: string, replaceUrl = true) => {
+    const code = normalizeRoomCode(rawCode);
+    if (!code) {
+      setLandingError('Enter a room code to join.');
+      return;
+    }
+
+    setJoiningRoom(true);
+    setLandingError('');
+    try {
+      const joinedRoom = await getRoom(code);
+      const joinedFiles = await listFiles(joinedRoom.workspaceId);
+      openRoom(joinedRoom, joinedFiles, replaceUrl);
+    } catch {
+      setLandingError(`Could not find room ${code}.`);
+    } finally {
+      setJoiningRoom(false);
+    }
+  }, []);
+
+  const handleCreateRoom = useCallback(async () => {
+    setCreatingRoom(true);
+    setLandingError('');
+    try {
+      const workspace = await createWorkspace(`Pear room ${formatRoomNameDate(new Date())}`);
+      const createdRoom = await createRoom(workspace.id);
+      openRoom(createdRoom, [], true);
+    } catch {
+      const fallbackRoom = { ...FALLBACK_ROOM, code: randomRoomCode() };
+      openRoom(fallbackRoom, [], true);
+      setLandingError('Backend is offline, so this room is local-only for now.');
+    } finally {
+      setCreatingRoom(false);
+    }
+  }, []);
+
+  const scheduleAutosave = useCallback((fileId: string, content: string) => {
+    const currentRoom = roomRef.current;
+    if (!currentRoom || currentRoom.id === FALLBACK_ROOM.id || !isUuid(fileId)) {
+      setSaveState('offline');
+      return;
+    }
+
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+    }
+
+    setSaveState('saving');
+    saveTimerRef.current = window.setTimeout(() => {
+      void updateFileContent(fileId, content)
+        .then((saved) => {
+          setFiles((current) => current.map((file) => (file.id === saved.id ? saved : file)));
+          setSaveState('saved');
+          setLastSavedAt(new Date().toISOString());
+        })
+        .catch(() => {
+          setSaveState('error');
+        });
+    }, 700);
+  }, []);
+
+  const handleEditorMount: OnMount = useCallback((editor, monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
+    monaco.editor.defineTheme('pear-github-dark', {
+      base: 'vs-dark',
+      inherit: true,
+      rules: [],
+      colors: {
+        'editor.background': '#0d1117',
+        'editorGutter.background': '#0d1117',
+        'editorLineNumber.foreground': '#5f6b7a',
+        'editorCursor.foreground': '#58a6ff',
+        'editor.selectionBackground': '#264f78'
+      }
+    });
+    monaco.editor.setTheme('pear-github-dark');
+
+    editor.onDidChangeModelContent(() => {
+      const currentFile = activeFileRef.current;
+      if (!currentFile) {
+        return;
+      }
+      const content = editor.getValue();
+      setFiles((current) => current.map((file) => (
+        file.id === currentFile.id ? { ...file, content, updatedAt: new Date().toISOString() } : file
+      )));
+      scheduleAutosave(currentFile.id, content);
+    });
+
+    editor.onDidChangeCursorPosition((event) => {
+      setCursorPosition({ line: event.position.lineNumber, col: event.position.column });
+      const now = Date.now();
+      if (now - cursorSentAtRef.current < 50) {
+        return;
+      }
+      cursorSentAtRef.current = now;
+      const client = stompRef.current;
+      const currentRoom = roomRef.current;
+      const currentFile = activeFileRef.current;
+      if (!client?.connected || !currentRoom || !currentFile) {
+        return;
+      }
+      client.publish({
+        destination: `/app/room/${currentRoom.code}/cursors`,
+        body: JSON.stringify({
+          userId: user.id,
+          displayName: user.name,
+          fileId: currentFile.id,
+          line: event.position.lineNumber,
+          col: event.position.column,
+          color: user.color,
+          sentAt: now
+        })
+      });
+    });
+  }, [scheduleAutosave, user.color, user.id, user.name]);
 
   useEffect(() => {
     roomRef.current = room;
@@ -134,6 +266,23 @@ export default function App() {
   useEffect(() => {
     stompRef.current = stompClient;
   }, [stompClient]);
+
+  useEffect(() => {
+    folderInputRef.current?.setAttribute('webkitdirectory', '');
+    folderInputRef.current?.setAttribute('directory', '');
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setPacificNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const joinCode = getJoinCode();
+    if (joinCode) {
+      void joinRoom(joinCode, false);
+    }
+  }, [joinRoom]);
 
   useEffect(() => {
     let cancelled = false;
@@ -149,54 +298,6 @@ export default function App() {
       cancelled = true;
     };
   }, [user.id, user.name]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadRoom() {
-      try {
-        const joinCode = getJoinCode();
-        if (joinCode) {
-          const joinedRoom = await getRoom(joinCode);
-          const joinedFiles = await listFiles(joinedRoom.workspaceId);
-          if (!cancelled) {
-            setRoom(joinedRoom);
-            setFiles(joinedFiles.length > 0 ? joinedFiles : [FALLBACK_FILE]);
-            setActiveFileId(joinedFiles[0]?.id ?? FALLBACK_FILE.id);
-          }
-          return;
-        }
-
-        const bootstrapped = await bootstrapDemoRoom();
-        if (!cancelled) {
-          setRoom(bootstrapped.room);
-          setFiles(bootstrapped.files.length > 0 ? bootstrapped.files : [FALLBACK_FILE]);
-          setActiveFileId(bootstrapped.files[0]?.id ?? FALLBACK_FILE.id);
-        }
-      } catch {
-        if (!cancelled) {
-          setRoom(FALLBACK_ROOM);
-          setFiles([FALLBACK_FILE]);
-          setActiveFileId(FALLBACK_FILE.id);
-          setMessages([
-            {
-              id: 'local-system',
-              userId: null,
-              displayName: 'AI',
-              content: 'AI is unavailable, try again',
-              ai: true,
-              createdAt: new Date().toISOString()
-            }
-          ]);
-        }
-      }
-    }
-
-    loadRoom();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!room) {
@@ -263,22 +364,49 @@ export default function App() {
           setCursors((current) => ({ ...current, [cursor.userId]: cursor }));
         });
         client.subscribe(`/topic/room/${room.code}/members`, (message: IMessage) => {
-          const event = JSON.parse(message.body) as { type: string; userId: string };
+          const event = JSON.parse(message.body) as { type: string; userId: string; displayName?: string; color?: string; avatarUrl?: string };
           if (event.type === 'left') {
+            setPresenceMembers((current) => {
+              const next = { ...current };
+              delete next[event.userId];
+              return next;
+            });
             setCursors((current) => {
               const next = { ...current };
               delete next[event.userId];
               return next;
             });
+            return;
+          }
+          if (event.type === 'joined' && event.userId !== user.id) {
+            setPresenceMembers((current) => ({
+              ...current,
+              [event.userId]: {
+                id: event.userId,
+                name: event.displayName || 'Guest',
+                color: event.color || '#378ADD',
+                avatarUrl: event.avatarUrl
+              }
+            }));
           }
         });
         client.subscribe(`/topic/room/${room.code}/annotations`, (message: IMessage) => {
           const annotation = JSON.parse(message.body) as AiAnnotation;
           setAnnotations((current) => upsertAnnotation(current, annotation).slice(-5));
         });
+        client.subscribe(`/topic/room/${room.code}/project-switch`, (message: IMessage) => {
+          handleProjectSwitchEvent(JSON.parse(message.body) as ProjectSwitchEvent);
+        });
         client.publish({
           destination: `/app/room/${room.code}/members`,
-          body: JSON.stringify({ type: 'joined', userId: user.id, displayName: user.name, color: user.color, at: new Date().toISOString() })
+          body: JSON.stringify({
+            type: 'joined',
+            userId: user.id,
+            displayName: user.name,
+            color: user.color,
+            avatarUrl: user.avatarUrl,
+            at: new Date().toISOString()
+          })
         });
       },
       onWebSocketClose: () => setStompConnected(false),
@@ -299,7 +427,7 @@ export default function App() {
       setStompConnected(false);
       setStompClient(null);
     };
-  }, [authToken, room, user.color, user.id, user.name]);
+  }, [authToken, room, user.avatarUrl, user.color, user.id, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -424,52 +552,293 @@ export default function App() {
     return () => clearAnnotationWidgets(editor);
   }, [activeFile, annotations]);
 
-  const handleEditorMount: OnMount = useCallback((editor, monaco) => {
-    editorRef.current = editor;
-    monacoRef.current = monaco;
-    monaco.editor.defineTheme('pear-github-dark', {
-      base: 'vs-dark',
-      inherit: true,
-      rules: [],
-      colors: {
-        'editor.background': '#0d1117',
-        'editorGutter.background': '#0d1117',
-        'editorLineNumber.foreground': '#5f6b7a',
-        'editorCursor.foreground': '#58a6ff',
-        'editor.selectionBackground': '#264f78'
-      }
-    });
-    monaco.editor.setTheme('pear-github-dark');
+  if (!room) {
+    return (
+      <LandingPage
+        code={landingCode}
+        creating={creatingRoom}
+        error={landingError}
+        joining={joiningRoom}
+        onCodeChange={setLandingCode}
+        onCreate={handleCreateRoom}
+        onJoin={() => void joinRoom(landingCode)}
+      />
+    );
+  }
 
-    editor.onDidChangeCursorPosition((event) => {
-      setCursorPosition({ line: event.position.lineNumber, col: event.position.column });
-      const now = Date.now();
-      if (now - cursorSentAtRef.current < 50) {
-        return;
-      }
-      cursorSentAtRef.current = now;
-      const client = stompRef.current;
-      const currentRoom = roomRef.current;
-      const currentFile = activeFileRef.current;
-      if (!client?.connected || !currentRoom || !currentFile) {
-        return;
-      }
-      client.publish({
-        destination: `/app/room/${currentRoom.code}/cursors`,
-        body: JSON.stringify({
-          userId: user.id,
-          displayName: user.name,
-          fileId: currentFile.id,
-          line: event.position.lineNumber,
-          col: event.position.column,
-          color: user.color,
-          sentAt: now
-        })
-      });
-    });
-  }, [user.color, user.id, user.name]);
+  const tree = buildTree(files);
+  const hasApproved = pendingSwitch?.approvedUserIds.includes(user.id) ?? false;
 
-  const sendChat = useCallback(() => {
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark">Pear</span>
+          <span>PearProgram</span>
+        </div>
+        <div className="project-label">
+          <span>{activeProjectName}</span>
+        </div>
+        <div className="collaborators" aria-label="Collaborators">
+          <span className="online-dot" />
+          <span className="online-count">{Math.max(1, humanMembers.length)} online</span>
+          {members.map((member) => member.id === user.id ? (
+            <button
+              className="avatar avatar-button"
+              key={member.id}
+              onClick={() => openProfileEditor(user)}
+              style={{ backgroundColor: `${member.color}22`, color: member.color }}
+              title="Edit profile"
+              type="button"
+            >
+              {member.avatarUrl ? <img alt="" src={member.avatarUrl} /> : initials(member.name)}
+            </button>
+          ) : (
+            <span
+              className={`avatar ${member.ai ? 'avatar-ai' : ''}`}
+              key={member.id}
+              style={{ backgroundColor: member.ai ? '#EEEDFE' : `${member.color}22`, color: member.color }}
+              title={member.name}
+            >
+              {member.ai ? <Bot size={13} /> : member.avatarUrl ? <img alt="" src={member.avatarUrl} /> : initials(member.name)}
+            </span>
+          ))}
+        </div>
+      </header>
+
+      <section className={`workspace-grid ${chatOpen ? '' : 'chat-collapsed'}`}>
+        <aside className="explorer">
+          <div className="pane-title-row">
+            <span className="pane-title">Explorer</span>
+            <div className="icon-row">
+              <button className="icon-button" onClick={handleNewFile} type="button" title="New file">
+                <FilePlus2 size={15} />
+              </button>
+              <button className="icon-button" onClick={handleNewFolder} type="button" title="New folder">
+                <FolderPlus size={15} />
+              </button>
+            </div>
+          </div>
+          <div className="upload-actions">
+            <button className="upload-button" onClick={() => fileInputRef.current?.click()} type="button">
+              <Upload size={14} />
+              <span>Upload files</span>
+            </button>
+            <button className="upload-button" onClick={() => folderInputRef.current?.click()} type="button">
+              <FolderPlus size={14} />
+              <span>Upload folder</span>
+            </button>
+          </div>
+          <input className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, false)} ref={fileInputRef} type="file" />
+          <input className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, true)} ref={folderInputRef} type="file" />
+          <div className="tree">
+            {tree.length > 0 ? tree.map((node) => (
+              <TreeRow
+                activeFileId={activeFile?.id ?? ''}
+                expandedFolders={expandedFolders}
+                key={node.path}
+                node={node}
+                onFileSelect={setActiveFileId}
+                onToggleFolder={toggleFolder}
+              />
+            )) : (
+              <div className="empty-tree">No files yet</div>
+            )}
+          </div>
+        </aside>
+
+        <section className="editor-area">
+          <div className="tabs">
+            {files.map((file) => (
+              <button
+                className={`tab ${file.id === activeFile?.id ? 'tab-active' : ''}`}
+                key={file.id}
+                onClick={() => setActiveFileId(file.id)}
+                type="button"
+              >
+                <span className={`language-dot ${languageClass(file.language)}`} />
+                <span>{basename(file.path)}</span>
+              </button>
+            ))}
+          </div>
+          <div className="editor-frame">
+            {activeFile ? (
+              <Editor
+                height="100%"
+                language={activeFile.language}
+                onMount={handleEditorMount}
+                options={{
+                  automaticLayout: true,
+                  fontFamily: 'JetBrains Mono, Consolas, monospace',
+                  fontSize: 14,
+                  lineHeight: 22,
+                  minimap: { enabled: false },
+                  padding: { top: 14, bottom: 14 },
+                  scrollBeyondLastLine: false,
+                  tabSize: 2
+                }}
+                path={activeFile.path}
+                theme="pear-github-dark"
+                value={activeFile.content}
+              />
+            ) : (
+              <div className="empty-editor">
+                <div>
+                  <h1>Start with your files</h1>
+                  <p>Create a file, upload files, or upload a folder to begin editing in this room.</p>
+                  <div className="empty-editor-actions">
+                    <button onClick={() => fileInputRef.current?.click()} type="button">
+                      <Upload size={16} />
+                      Upload files
+                    </button>
+                    <button onClick={() => folderInputRef.current?.click()} type="button">
+                      <FolderPlus size={16} />
+                      Upload folder
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {chatOpen ? (
+          <aside className="chat">
+            <div className="pane-title-row chat-title-row">
+              <span className="pane-title">Room chat</span>
+              <div className="chat-title-tools">
+                <span className="shared-label">{formatPacificTime(pacificNow.toISOString())}</span>
+                <button className="icon-button" onClick={() => setChatOpen(false)} title="Hide chat" type="button">
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+            <div className="messages">
+              {messages.map((message) => (
+                <article className={`message ${message.ai ? 'message-ai' : ''}`} key={message.id}>
+                  <div className="message-meta">
+                    <span>{message.displayName}</span>
+                    <span>{formatPacificTime(message.createdAt)}</span>
+                  </div>
+                  <p>{message.content}</p>
+                </article>
+              ))}
+            </div>
+            <div className="chat-input">
+              <input
+                onChange={(event) => setChatDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    sendChat();
+                  }
+                }}
+                placeholder="Message or @AI..."
+                value={chatDraft}
+              />
+              <button className="send-button" onClick={sendChat} title="Send message" type="button">
+                <Send size={16} />
+              </button>
+            </div>
+          </aside>
+        ) : (
+          <aside className="chat-rail">
+            <button className="chat-rail-button" onClick={() => setChatOpen(true)} title="Show chat" type="button">
+              <MessageSquare size={17} />
+            </button>
+          </aside>
+        )}
+      </section>
+
+      <footer className="statusbar">
+        <span className="status-pill">{activeFile?.language ?? 'plaintext'}</span>
+        <span>Ln {cursorPosition.line}, Col {cursorPosition.col}</span>
+        <span className="sync-status">
+          {stompConnected ? <Wifi size={13} /> : <WifiOff size={13} />}
+          {syncStatus} - {peerCount} peers
+        </span>
+        <span>{saveStatusText(saveState, lastSavedAt)}</span>
+        <span className="encoding">UTF-8 - LF</span>
+      </footer>
+
+      <button className="room-code-float" onClick={copyRoomCode} title="Copy room code" type="button">
+        <span>Room Code: {room.code}</span>
+        <Copy size={13} />
+      </button>
+
+      {pendingSwitch && (
+        <div className="modal-backdrop">
+          <section className="confirm-modal" role="dialog" aria-modal="true" aria-label="Confirm project switch">
+            <header>
+              <h2>Switch project?</h2>
+              <span>{pendingSwitch.approvedUserIds.length}/{pendingSwitch.requiredUserIds.length} agreed</span>
+            </header>
+            <p>
+              Agree to switch from <strong>{pendingSwitch.currentFolder}</strong> to <strong>{pendingSwitch.newFolder}</strong>?
+            </p>
+            <div className="modal-actions">
+              <button className="secondary-button" onClick={declineProjectSwitch} type="button">
+                <X size={15} />
+                Decline
+              </button>
+              <button className="primary-button" disabled={hasApproved} onClick={approveProjectSwitch} type="button">
+                <Check size={15} />
+                {hasApproved ? 'Agreed' : 'Agree'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {profileOpen && (
+        <div className="modal-backdrop">
+          <section className="profile-modal" role="dialog" aria-modal="true" aria-label="Profile">
+            <header>
+              <h2>Profile</h2>
+              <button className="icon-button" onClick={() => setProfileOpen(false)} title="Close profile" type="button">
+                <X size={14} />
+              </button>
+            </header>
+            <div className="profile-preview">
+              <span className="profile-avatar" style={{ backgroundColor: `${user.color}22`, color: user.color }}>
+                {profileDraftAvatar ? <img alt="" src={profileDraftAvatar} /> : <UserRound size={22} />}
+              </span>
+              <button className="secondary-button" onClick={() => avatarInputRef.current?.click()} type="button">
+                <ImagePlus size={15} />
+                Upload photo
+              </button>
+              <input accept="image/*" className="hidden-file-input" onChange={(event) => void handleAvatarInput(event.currentTarget)} ref={avatarInputRef} type="file" />
+            </div>
+            <label className="field-label">
+              Display name
+              <input onChange={(event) => setProfileDraftName(event.target.value)} value={profileDraftName} />
+            </label>
+            <div className="modal-actions">
+              <button className="secondary-button" onClick={() => setProfileOpen(false)} type="button">Cancel</button>
+              <button className="primary-button" onClick={saveProfile} type="button">Save</button>
+            </div>
+          </section>
+        </div>
+      )}
+    </main>
+  );
+
+  function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean) {
+    setRoom(nextRoom);
+    setFiles(nextFiles.sort(sortByPath));
+    setActiveFileId(nextFiles[0]?.id ?? null);
+    setExpandedFolders(foldersForPaths(nextFiles.map((file) => file.path)));
+    setMessages([]);
+    setAnnotations([]);
+    setCursors({});
+    setPresenceMembers({});
+    setSaveState(nextFiles.length > 0 ? 'saved' : 'idle');
+    setLastSavedAt(null);
+    if (replaceUrl) {
+      window.history.replaceState(null, '', `/join/${nextRoom.code}`);
+    }
+  }
+
+  function sendChat() {
     const content = chatDraft.trim();
     if (!content || !room) {
       return;
@@ -489,7 +858,7 @@ export default function App() {
       });
     } else {
       const localAiAnnotation = content.toUpperCase().includes('@AI') && activeFile
-        ? createLocalAnnotation(activeFile.id, cursorPosition.line, user.name)
+        ? createLocalAnnotation(activeFile.id, cursorPosition.line, user.name, room.code)
         : null;
       setMessages((current) => [
         ...current,
@@ -506,7 +875,7 @@ export default function App() {
               id: crypto.randomUUID(),
               userId: null,
               displayName: 'AI',
-              content: `Placeholder AI: I can see ${activeFile?.path ?? 'the active file'} and your cursor near line ${cursorPosition.line}. I would use recent diffs and room cursors before giving a concrete suggestion.`,
+              content: `Placeholder AI: I can see ${activeFile?.path ?? 'the active file'} and your cursor near line ${cursorPosition.line}.`,
               ai: true,
               createdAt: new Date().toISOString()
             }]
@@ -518,86 +887,273 @@ export default function App() {
     }
 
     setChatDraft('');
-  }, [activeFile, chatDraft, cursorPosition.line, room, stompClient, user.id, user.name]);
+  }
 
-  const copyRoomLink = useCallback(() => {
-    if (!room) {
+  function copyRoomCode() {
+    const currentRoom = roomRef.current;
+    if (currentRoom) {
+      void navigator.clipboard.writeText(currentRoom.code);
+    }
+  }
+
+  async function handleNewFile() {
+    const currentRoom = roomRef.current;
+    if (!currentRoom) {
       return;
     }
-    void navigator.clipboard.writeText(`${window.location.origin}/join/${room.code}`);
-  }, [room]);
 
-  const handleNewFile = useCallback(async () => {
-    if (!room) {
-      return;
-    }
-
-    const path = window.prompt('New file path', 'src/main/java/NewFile.java')?.trim();
+    const path = window.prompt('New file path', 'index.js')?.trim();
     if (!path) {
       return;
     }
 
     try {
-      const created = await createFile(room.workspaceId, path);
-      setFiles((current) => [...current.filter((file) => file.id !== created.id), created].sort(sortByPath));
+      const created = await createFile(currentRoom.workspaceId, path, '', inferLanguage(path));
+      setFiles((current) => mergeFiles(current, [created]).sort(sortByPath));
       setActiveFileId(created.id);
       expandForPath(path);
     } catch {
-      const local = createLocalFile(path);
-      setFiles((current) => [...current, local].sort(sortByPath));
+      const local = createLocalFile(path, currentRoom.workspaceId);
+      setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
       setActiveFileId(local.id);
       expandForPath(path);
     }
-  }, [room]);
+  }
 
-  const handleNewFolder = useCallback(async () => {
-    if (!room) {
+  async function handleNewFolder() {
+    const currentRoom = roomRef.current;
+    if (!currentRoom) {
       return;
     }
 
-    const path = window.prompt('New folder path', 'src/main/java/newfolder')?.trim();
+    const path = window.prompt('New folder path', 'new-folder')?.trim();
     if (!path) {
       return;
     }
 
     const markerPath = `${path.replace(/\/$/, '')}/.gitkeep`;
     try {
-      const created = await createFile(room.workspaceId, markerPath);
-      setFiles((current) => [...current.filter((file) => file.id !== created.id), created].sort(sortByPath));
+      const created = await createFile(currentRoom.workspaceId, markerPath, '', 'plaintext');
+      setFiles((current) => mergeFiles(current, [created]).sort(sortByPath));
       setActiveFileId(created.id);
       expandForPath(markerPath);
     } catch {
-      const local = createLocalFile(markerPath);
-      setFiles((current) => [...current, local].sort(sortByPath));
+      const local = createLocalFile(markerPath, currentRoom.workspaceId);
+      setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
       setActiveFileId(local.id);
       expandForPath(markerPath);
     }
-  }, [room]);
+  }
 
-  const handleImportGitHub = useCallback(async () => {
-    if (!room) {
+  async function handleUploadInput(input: HTMLInputElement, folderUpload: boolean) {
+    if (!input.files || input.files.length === 0) {
       return;
     }
 
-    const repoInput = window.prompt('GitHub repo', 'sample-org/pearprogram-import')?.trim();
-    if (!repoInput) {
+    const candidates = await readUploadCandidates(input.files);
+    input.value = '';
+    if (candidates.length === 0) {
+      setSaveState('error');
       return;
     }
-    const [owner = 'sample-org', repo = 'pearprogram-import'] = repoInput.split('/');
-    const branch = window.prompt('Branch', 'main')?.trim() || 'main';
 
+    const newFolder = projectNameForPaths(candidates.map((file) => file.path));
+    const isSwitch = files.length > 0 && (folderUpload || newFolder !== activeProjectName);
+    const requiredUserIds = humanMembers.map((member) => member.id);
+
+    if (isSwitch && requiredUserIds.length > 1 && stompRef.current?.connected) {
+      const proposalId = crypto.randomUUID();
+      const proposal: PendingSwitch = {
+        proposalId,
+        currentFolder: activeProjectName,
+        newFolder,
+        proposerId: user.id,
+        proposerName: user.name,
+        requiredUserIds,
+        approvedUserIds: []
+      };
+      pendingUploadRef.current = { proposalId, candidates, newFolder };
+      setPendingSwitch(proposal);
+      publishProjectSwitch({
+        type: 'proposed',
+        ...proposal,
+        at: new Date().toISOString()
+      });
+      return;
+    }
+
+    void persistUploadCandidates(candidates, isSwitch);
+  }
+
+  async function persistUploadCandidates(candidates: UploadCandidate[], replaceExisting: boolean) {
+    const currentRoom = roomRef.current;
+    if (!currentRoom) {
+      return [];
+    }
+
+    setSaveState('saving');
     try {
-      const imported = await importPlaceholderRepository(room.workspaceId, owner, repo, branch);
-      setFiles((current) => mergeFiles(current, imported.files).sort(sortByPath));
-      setActiveFileId(imported.files[0]?.id ?? activeFileId);
-      imported.files.forEach((file) => expandForPath(file.path));
+      const uploaded = currentRoom.id === FALLBACK_ROOM.id
+        ? candidates.map((candidate) => createLocalFileFromCandidate(candidate, currentRoom.workspaceId))
+        : await uploadWorkspaceFiles(currentRoom.workspaceId, candidates, replaceExisting);
+      applyUploadedFiles(uploaded, replaceExisting);
+      setSaveState(currentRoom.id === FALLBACK_ROOM.id ? 'offline' : 'saved');
+      setLastSavedAt(new Date().toISOString());
+      return uploaded;
     } catch {
-      const imported = createLocalGitHubFiles(owner, repo, branch);
-      setFiles((current) => mergeFiles(current, imported).sort(sortByPath));
-      setActiveFileId(imported[0]?.id ?? activeFileId);
-      imported.forEach((file) => expandForPath(file.path));
+      const local = candidates.map((candidate) => createLocalFileFromCandidate(candidate, currentRoom.workspaceId));
+      applyUploadedFiles(local, replaceExisting);
+      setSaveState('offline');
+      return local;
     }
-  }, [activeFileId, room]);
+  }
+
+  function applyUploadedFiles(uploaded: WorkspaceFile[], replaceExisting: boolean) {
+    setFiles((current) => {
+      const next = (replaceExisting ? uploaded : mergeFiles(current, uploaded)).sort(sortByPath);
+      setActiveFileId(next[0]?.id ?? null);
+      setExpandedFolders(foldersForPaths(next.map((file) => file.path)));
+      return next;
+    });
+  }
+
+  function handleProjectSwitchEvent(event: ProjectSwitchEvent) {
+    if (!event.proposalId) {
+      return;
+    }
+
+    if (event.type === 'proposed') {
+      setPendingSwitch({
+        proposalId: event.proposalId,
+        currentFolder: event.currentFolder,
+        newFolder: event.newFolder,
+        proposerId: event.proposerId,
+        proposerName: event.proposerName,
+        requiredUserIds: event.requiredUserIds ?? [],
+        approvedUserIds: event.approvedUserIds ?? []
+      });
+      return;
+    }
+
+    if (event.type === 'vote') {
+      setPendingSwitch((current) => {
+        if (!current || current.proposalId !== event.proposalId || !event.voterId) {
+          return current;
+        }
+        const next = {
+          ...current,
+          approvedUserIds: uniqueStrings([...current.approvedUserIds, event.voterId])
+        };
+        maybeCommitApprovedSwitch(next);
+        return next;
+      });
+      return;
+    }
+
+    if (event.type === 'accepted') {
+      if (event.files?.length) {
+        applyUploadedFiles(event.files, true);
+      }
+      pendingUploadRef.current = null;
+      committingProposalRef.current = null;
+      setPendingSwitch(null);
+      return;
+    }
+
+    if (event.type === 'declined') {
+      pendingUploadRef.current = null;
+      committingProposalRef.current = null;
+      setPendingSwitch(null);
+    }
+  }
+
+  function approveProjectSwitch() {
+    if (!pendingSwitch || pendingSwitch.approvedUserIds.includes(user.id)) {
+      return;
+    }
+
+    const next = {
+      ...pendingSwitch,
+      approvedUserIds: uniqueStrings([...pendingSwitch.approvedUserIds, user.id])
+    };
+    setPendingSwitch(next);
+    publishProjectSwitch({
+      type: 'vote',
+      ...next,
+      voterId: user.id,
+      voterName: user.name,
+      at: new Date().toISOString()
+    });
+    maybeCommitApprovedSwitch(next);
+  }
+
+  function declineProjectSwitch() {
+    if (!pendingSwitch) {
+      return;
+    }
+
+    publishProjectSwitch({
+      type: 'declined',
+      ...pendingSwitch,
+      voterId: user.id,
+      voterName: user.name,
+      at: new Date().toISOString()
+    });
+    pendingUploadRef.current = null;
+    committingProposalRef.current = null;
+    setPendingSwitch(null);
+  }
+
+  function maybeCommitApprovedSwitch(proposal: PendingSwitch) {
+    const upload = pendingUploadRef.current;
+    if (!upload || upload.proposalId !== proposal.proposalId || proposal.proposerId !== user.id) {
+      return;
+    }
+
+    const approved = new Set(proposal.approvedUserIds);
+    const allApproved = proposal.requiredUserIds.length > 0 && proposal.requiredUserIds.every((id) => approved.has(id));
+    if (!allApproved || committingProposalRef.current === proposal.proposalId) {
+      return;
+    }
+
+    committingProposalRef.current = proposal.proposalId;
+    void persistUploadCandidates(upload.candidates, true)
+      .then((uploaded) => {
+        publishProjectSwitch({
+          type: 'accepted',
+          ...proposal,
+          approvedUserIds: proposal.requiredUserIds,
+          files: uploaded,
+          at: new Date().toISOString()
+        });
+      })
+      .catch(() => {
+        publishProjectSwitch({
+          type: 'declined',
+          ...proposal,
+          voterId: user.id,
+          voterName: user.name,
+          at: new Date().toISOString()
+        });
+      })
+      .finally(() => {
+        pendingUploadRef.current = null;
+        committingProposalRef.current = null;
+        setPendingSwitch(null);
+      });
+  }
+
+  function publishProjectSwitch(event: ProjectSwitchEvent) {
+    const currentRoom = roomRef.current;
+    const client = stompRef.current;
+    if (!currentRoom || !client?.connected) {
+      return;
+    }
+    client.publish({
+      destination: `/app/room/${currentRoom.code}/project-switch`,
+      body: JSON.stringify(event)
+    });
+  }
 
   function toggleFolder(path: string) {
     setExpandedFolders((current) => {
@@ -624,146 +1180,6 @@ export default function App() {
     });
   }
 
-  return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">Pear</span>
-          <span>PearProgram</span>
-        </div>
-        <button className="room-pill" onClick={copyRoomLink} title="Copy room link" type="button">
-          <span>{room?.code ?? '...'}</span>
-          <Copy size={13} />
-        </button>
-        <div className="collaborators" aria-label="Collaborators">
-          <span className="online-dot" />
-          <span className="online-count">{Math.max(1, members.length - 1)} online</span>
-          {members.map((member) => (
-            <span
-              className={`avatar ${member.ai ? 'avatar-ai' : ''}`}
-              key={member.id}
-              style={{ backgroundColor: member.ai ? '#EEEDFE' : `${member.color}22`, color: member.color }}
-              title={member.name}
-            >
-              {member.ai ? <Bot size={13} /> : initials(member.name)}
-            </span>
-          ))}
-        </div>
-      </header>
-
-      <section className="workspace-grid">
-        <aside className="explorer">
-          <div className="pane-title-row">
-            <span className="pane-title">Explorer</span>
-            <div className="icon-row">
-              <button className="icon-button" onClick={handleNewFile} type="button" title="New file">
-                <FilePlus2 size={15} />
-              </button>
-              <button className="icon-button" onClick={handleNewFolder} type="button" title="New folder">
-                <FolderPlus size={15} />
-              </button>
-            </div>
-          </div>
-          <button className="github-button" onClick={handleImportGitHub} type="button">
-            <Github size={15} />
-            <span>Import from GitHub</span>
-          </button>
-          <div className="tree">
-            {buildTree(files).map((node) => (
-              <TreeRow
-                activeFileId={activeFile?.id ?? ''}
-                expandedFolders={expandedFolders}
-                key={node.path}
-                node={node}
-                onFileSelect={setActiveFileId}
-                onToggleFolder={toggleFolder}
-              />
-            ))}
-          </div>
-        </aside>
-
-        <section className="editor-area">
-          <div className="tabs">
-            {files.map((file) => (
-              <button
-                className={`tab ${file.id === activeFile?.id ? 'tab-active' : ''}`}
-                key={file.id}
-                onClick={() => setActiveFileId(file.id)}
-                type="button"
-              >
-                <span className={`language-dot ${languageClass(file.language)}`} />
-                <span>{basename(file.path)}</span>
-              </button>
-            ))}
-          </div>
-          <div className="editor-frame">
-            <Editor
-              height="100%"
-              language={activeFile?.language ?? 'java'}
-              onMount={handleEditorMount}
-              options={{
-                automaticLayout: true,
-                fontFamily: 'JetBrains Mono, Consolas, monospace',
-                fontSize: 14,
-                lineHeight: 22,
-                minimap: { enabled: false },
-                padding: { top: 14, bottom: 14 },
-                scrollBeyondLastLine: false,
-                tabSize: 2
-              }}
-              path={activeFile?.path}
-              theme="pear-github-dark"
-              value={activeFile?.content ?? ''}
-            />
-          </div>
-        </section>
-
-        <aside className="chat">
-          <div className="pane-title-row chat-title-row">
-            <span className="pane-title">Room chat</span>
-            <span className="shared-label">shared</span>
-          </div>
-          <div className="messages">
-            {messages.map((message) => (
-              <article className={`message ${message.ai ? 'message-ai' : ''}`} key={message.id}>
-                <div className="message-meta">
-                  <span>{message.displayName}</span>
-                  <span>{relativeTime(message.createdAt)}</span>
-                </div>
-                <p>{message.content}</p>
-              </article>
-            ))}
-          </div>
-          <div className="chat-input">
-            <input
-              onChange={(event) => setChatDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  sendChat();
-                }
-              }}
-              placeholder="Message or @AI..."
-              value={chatDraft}
-            />
-            <button className="send-button" onClick={sendChat} title="Send message" type="button">
-              <Send size={16} />
-            </button>
-          </div>
-        </aside>
-      </section>
-
-      <footer className="statusbar">
-        <span className="status-pill">{activeFile?.language ?? 'plaintext'}</span>
-        <span>Ln {cursorPosition.line}, Col {cursorPosition.col}</span>
-        <span className="sync-status">
-          {stompConnected ? <Wifi size={13} /> : <WifiOff size={13} />}
-          {syncStatus} - {peerCount} peers
-        </span>
-        <span className="encoding">UTF-8 - LF</span>
-      </footer>
-    </main>
-  );
-
   function clearCursorWidgets(editor: any) {
     for (const widget of cursorWidgetsRef.current.values()) {
       editor.removeContentWidget(widget);
@@ -777,6 +1193,103 @@ export default function App() {
     }
     annotationWidgetsRef.current.clear();
   }
+
+  function openProfileEditor(member: Member) {
+    setProfileDraftName(member.name);
+    setProfileDraftAvatar(member.avatarUrl);
+    setProfileOpen(true);
+  }
+
+  async function handleAvatarInput(input: HTMLInputElement) {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || !file.type.startsWith('image/') || file.size > 512 * 1024) {
+      return;
+    }
+    setProfileDraftAvatar(await fileToDataUrl(file));
+  }
+
+  function saveProfile() {
+    const updated = {
+      ...user,
+      name: profileDraftName.trim() || 'You',
+      avatarUrl: profileDraftAvatar
+    };
+    setUser(updated);
+    localStorage.setItem('pearprogram-user', JSON.stringify(updated));
+    setProfileOpen(false);
+
+    const currentRoom = roomRef.current;
+    const client = stompRef.current;
+    if (currentRoom && client?.connected) {
+      client.publish({
+        destination: `/app/room/${currentRoom.code}/members`,
+        body: JSON.stringify({
+          type: 'joined',
+          userId: updated.id,
+          displayName: updated.name,
+          color: updated.color,
+          avatarUrl: updated.avatarUrl,
+          at: new Date().toISOString()
+        })
+      });
+    }
+  }
+}
+
+function LandingPage({
+  code,
+  creating,
+  error,
+  joining,
+  onCodeChange,
+  onCreate,
+  onJoin
+}: {
+  code: string;
+  creating: boolean;
+  error: string;
+  joining: boolean;
+  onCodeChange: (code: string) => void;
+  onCreate: () => void;
+  onJoin: () => void;
+}) {
+  return (
+    <main className="landing-shell">
+      <section className="landing-panel">
+        <div className="landing-brand">
+          <span className="brand-mark">Pear</span>
+          <span>PearProgram</span>
+        </div>
+        <h1>Create or join a coding room</h1>
+        <div className="landing-actions">
+          <button className="primary-button create-room-button" disabled={creating} onClick={onCreate} type="button">
+            <Upload size={16} />
+            {creating ? 'Creating...' : 'Create empty room'}
+          </button>
+          <form
+            className="join-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onJoin();
+            }}
+          >
+            <input
+              autoCapitalize="characters"
+              onChange={(event) => onCodeChange(event.target.value)}
+              placeholder="Enter room code"
+              value={code}
+            />
+            <button className="secondary-button" disabled={joining} type="submit">
+              <LogIn size={15} />
+              {joining ? 'Joining...' : 'Join'}
+            </button>
+          </form>
+        </div>
+        {error && <p className="landing-error">{error}</p>}
+      </section>
+    </main>
+  );
 }
 
 function TreeRow({
@@ -868,20 +1381,24 @@ function toTreeNode(node: MutableTreeNode): TreeNode {
 }
 
 function getJoinCode() {
-  const match = window.location.pathname.match(/^\/join\/([^/]+)/);
+  const match = window.location.pathname.match(/^\/(?:join|room)\/([^/]+)/);
   return match?.[1] ?? null;
 }
 
 function getOrCreateLocalUser(): Member {
   const stored = localStorage.getItem('pearprogram-user');
   if (stored) {
-    return JSON.parse(stored) as Member;
+    try {
+      return JSON.parse(stored) as Member;
+    } catch {
+      localStorage.removeItem('pearprogram-user');
+    }
   }
 
   const id = crypto.randomUUID();
   const user: Member = {
     id,
-    name: `You`,
+    name: 'You',
     color: USER_COLORS[Math.abs(hash(id)) % USER_COLORS.length]
   };
   localStorage.setItem('pearprogram-user', JSON.stringify(user));
@@ -894,6 +1411,10 @@ function uniqueMembers(members: Member[]) {
     byId.set(member.id, member);
   }
   return [...byId.values()];
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)];
 }
 
 function initials(name: string) {
@@ -911,28 +1432,6 @@ function basename(path: string) {
   return parts[parts.length - 1] ?? path;
 }
 
-function languageClass(language: string) {
-  if (language === 'java' || language === 'typescript') {
-    return 'dot-blue';
-  }
-  if (language === 'javascript') {
-    return 'dot-amber';
-  }
-  if (language === 'python') {
-    return 'dot-green';
-  }
-  return 'dot-neutral';
-}
-
-function relativeTime(value: string) {
-  const diffMs = Date.now() - new Date(value).getTime();
-  const minutes = Math.max(0, Math.round(diffMs / 60_000));
-  if (minutes === 0) {
-    return 'now';
-  }
-  return `${minutes}m`;
-}
-
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -941,11 +1440,11 @@ function upsertAnnotation(current: AiAnnotation[], annotation: AiAnnotation) {
   return [...current.filter((item) => item.id !== annotation.id), annotation];
 }
 
-function createLocalAnnotation(fileId: string, line: number, userName: string): AiAnnotation {
+function createLocalAnnotation(fileId: string, line: number, userName: string, roomCode: string): AiAnnotation {
   return {
     id: crypto.randomUUID(),
     fileId,
-    roomCode: FALLBACK_ROOM.code,
+    roomCode,
     triggeredBy: userName,
     line: Math.max(1, line),
     content: `${userName} is working near line ${Math.max(1, line)}. Placeholder AI would compare this against recent diffs before making a concrete suggestion.`,
@@ -953,10 +1452,10 @@ function createLocalAnnotation(fileId: string, line: number, userName: string): 
   };
 }
 
-function createLocalFile(path: string): WorkspaceFile {
+function createLocalFile(path: string, workspaceId: string): WorkspaceFile {
   return {
     id: crypto.randomUUID(),
-    workspaceId: FALLBACK_ROOM.workspaceId,
+    workspaceId,
     path,
     language: inferLanguage(path),
     content: '',
@@ -965,28 +1464,16 @@ function createLocalFile(path: string): WorkspaceFile {
   };
 }
 
-function createLocalGitHubFiles(owner: string, repo: string, branch: string): WorkspaceFile[] {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: crypto.randomUUID(),
-      workspaceId: FALLBACK_ROOM.workspaceId,
-      path: `${repo}/README.md`,
-      language: 'markdown',
-      content: `# ${repo}\n\nPlaceholder GitHub import from ${owner}/${repo}@${branch}.\n`,
-      createdAt: now,
-      updatedAt: now
-    },
-    {
-      id: crypto.randomUUID(),
-      workspaceId: FALLBACK_ROOM.workspaceId,
-      path: `${repo}/src/ImportedEditor.tsx`,
-      language: 'typescript',
-      content: `export function ImportedEditor() {\n  return <section>PearProgram imported this placeholder file from GitHub.</section>;\n}\n`,
-      createdAt: now,
-      updatedAt: now
-    }
-  ];
+function createLocalFileFromCandidate(candidate: UploadCandidate, workspaceId: string): WorkspaceFile {
+  return {
+    id: crypto.randomUUID(),
+    workspaceId,
+    path: candidate.path,
+    language: candidate.language,
+    content: candidate.content,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
 }
 
 function mergeFiles(current: WorkspaceFile[], incoming: WorkspaceFile[]) {
@@ -1004,24 +1491,73 @@ function sortByPath(a: WorkspaceFile, b: WorkspaceFile) {
   return a.path.localeCompare(b.path);
 }
 
-function inferLanguage(path: string) {
-  const lower = path.toLowerCase();
-  if (lower.endsWith('.java')) {
-    return 'java';
+function foldersForPaths(paths: string[]) {
+  const folders = new Set<string>();
+  for (const path of paths) {
+    const parts = path.split('/').filter(Boolean);
+    let folder = '';
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      folder = folder ? `${folder}/${parts[index]}` : parts[index];
+      folders.add(folder);
+    }
   }
-  if (lower.endsWith('.ts') || lower.endsWith('.tsx')) {
-    return 'typescript';
+  return folders;
+}
+
+function normalizeRoomCode(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function randomRoomCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let index = 0; index < 6; index += 1) {
+    code += alphabet[Math.floor(Math.random() * alphabet.length)];
   }
-  if (lower.endsWith('.js') || lower.endsWith('.jsx')) {
-    return 'javascript';
+  return code;
+}
+
+function formatRoomNameDate(date: Date) {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(date);
+}
+
+function formatPacificTime(value: string) {
+  return new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/Los_Angeles',
+    timeZoneName: 'short'
+  }).format(new Date(value));
+}
+
+function saveStatusText(state: SaveState, lastSavedAt: string | null) {
+  if (state === 'saving') {
+    return 'Autosaving...';
   }
-  if (lower.endsWith('.py')) {
-    return 'python';
+  if (state === 'saved') {
+    return lastSavedAt ? `Autosaved ${formatPacificTime(lastSavedAt)}` : 'Autosaved';
   }
-  if (lower.endsWith('.md')) {
-    return 'markdown';
+  if (state === 'offline') {
+    return 'Local changes';
   }
-  return 'plaintext';
+  if (state === 'error') {
+    return 'Autosave retrying';
+  }
+  return 'Autosave ready';
+}
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(String(reader.result ?? '')));
+    reader.addEventListener('error', () => reject(reader.error));
+    reader.readAsDataURL(file);
+  });
 }
 
 function hash(value: string) {

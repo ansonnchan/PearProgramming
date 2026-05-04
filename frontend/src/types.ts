@@ -62,6 +62,7 @@ export type Member = {
   id: string;
   name: string;
   color: string;
+  avatarUrl?: string;
   ai?: boolean;
 };
 
@@ -70,4 +71,19 @@ export type GitHubImportResponse = {
   repo: string;
   branch: string;
   files: WorkspaceFile[];
+};
+
+export type ProjectSwitchEvent = {
+  type: 'proposed' | 'vote' | 'accepted' | 'declined';
+  proposalId: string;
+  currentFolder: string;
+  newFolder: string;
+  proposerId: string;
+  proposerName: string;
+  voterId?: string;
+  voterName?: string;
+  requiredUserIds?: string[];
+  approvedUserIds?: string[];
+  files?: WorkspaceFile[];
+  at: string;
 };

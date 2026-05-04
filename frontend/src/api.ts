@@ -1,4 +1,5 @@
-import type { AiAnnotation, BootstrapResponse, ChatMessage, GitHubImportResponse, Room, WorkspaceFile } from './types';
+import type { AiAnnotation, BootstrapResponse, ChatMessage, GitHubImportResponse, Room, Workspace, WorkspaceFile } from './types';
+import type { UploadCandidate } from './uploads';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080';
 export const STOMP_URL = import.meta.env.VITE_STOMP_URL ?? 'http://localhost:8080/ws';
@@ -20,15 +21,35 @@ export async function getRoom(code: string): Promise<Room> {
   return getJson<Room>(`/api/rooms/${code}`);
 }
 
+export async function createWorkspace(name: string): Promise<Workspace> {
+  return postJson<Workspace>('/api/workspaces', { name });
+}
+
+export async function createRoom(workspaceId: string): Promise<Room> {
+  return postJson<Room>('/api/rooms', { workspaceId });
+}
+
 export async function listFiles(workspaceId: string): Promise<WorkspaceFile[]> {
   return getJson<WorkspaceFile[]>(`/api/workspaces/${workspaceId}/files`);
 }
 
-export async function createFile(workspaceId: string, path: string, content = ''): Promise<WorkspaceFile> {
+export async function createFile(workspaceId: string, path: string, content = '', language?: string): Promise<WorkspaceFile> {
   return postJson<WorkspaceFile>(`/api/workspaces/${workspaceId}/files`, {
     path,
+    language,
     content
   });
+}
+
+export async function uploadWorkspaceFiles(workspaceId: string, files: UploadCandidate[], replaceExisting: boolean): Promise<WorkspaceFile[]> {
+  return postJson<WorkspaceFile[]>(`/api/workspaces/${workspaceId}/files/batch`, {
+    replaceExisting,
+    files
+  });
+}
+
+export async function updateFileContent(fileId: string, content: string): Promise<WorkspaceFile> {
+  return patchJson<WorkspaceFile>(`/api/files/${fileId}`, { content });
 }
 
 export async function importPlaceholderRepository(workspaceId: string, owner: string, repo: string, branch: string): Promise<GitHubImportResponse> {
@@ -72,6 +93,18 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   });
   if (!response.ok) {
     throw new Error(`POST ${path} failed with ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw new Error(`PATCH ${path} failed with ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
