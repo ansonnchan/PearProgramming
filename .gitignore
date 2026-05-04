@@ -12,6 +12,7 @@ yarn-error.log*
 
 # Java/Maven
 backend/target/
+backend/data/
 .m2/
 
 # Node
