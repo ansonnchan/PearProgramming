@@ -1,0 +1,37 @@
+{
+  "name": "@pearprogram/frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "lint": "tsc -b --pretty false",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "4.6.0",
+    "@stomp/stompjs": "7.0.0",
+    "lucide-react": "0.468.0",
+    "monaco-editor": "0.52.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.28.0",
+    "sockjs-client": "1.6.1",
+    "y-monaco": "0.1.6",
+    "y-websocket": "1.5.4",
+    "yjs": "13.6.20",
+    "zustand": "5.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@types/sockjs-client": "1.5.4",
+    "@vitejs/plugin-react": "4.3.4",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.49",
+    "tailwindcss": "3.4.15",
+    "typescript": "5.6.3",
+    "vite": "5.4.11"
+  }
+}
