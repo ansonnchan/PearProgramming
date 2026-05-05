@@ -23,6 +23,7 @@ import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
 import { WebsocketProvider } from 'y-websocket';
 import {
+  API_BASE_URL,
   ApiError,
   createFile,
   createRoom,
@@ -202,10 +203,10 @@ export default function App() {
       const joinedFiles = await listFiles(joinedRoom.workspaceId);
       openRoom(joinedRoom, joinedFiles, replaceUrl, access.leadUserId, access.locked);
     } catch (error) {
-      console.warn('Join room failed', { code, error });
+      console.warn('Join room failed', { apiBaseUrl: API_BASE_URL, code, error });
       setLandingError(error instanceof ApiError && error.status === 404
         ? `Could not find room ${code}.`
-        : 'Could not join this room. Please check the room code and your connection.');
+        : `Could not join this room. The frontend tried ${API_BASE_URL}.`);
     } finally {
       setJoiningRoom(false);
     }
@@ -220,8 +221,8 @@ export default function App() {
       const createdRoom = await createRoom(workspace.id);
       openRoom(createdRoom, [], true, user.id, false);
     } catch (error) {
-      console.warn('Create room failed', error);
-      setLandingError('Could not create a shared room. Please check the backend URL and try again.');
+      console.warn('Create room failed', { apiBaseUrl: API_BASE_URL, error });
+      setLandingError(`Could not create a shared room. The frontend tried ${API_BASE_URL}.`);
     } finally {
       setCreatingRoom(false);
     }
@@ -1827,7 +1828,7 @@ function LandingPage({
 
               <br />
               <br></br>
-              Now, go <strong>get pearing.</strong> with your team.
+              Now, go <strong>get pearing</strong>.
             </p>
  
           </div>
