@@ -5,14 +5,13 @@ const Y = require('yjs');
 const Redis = require('ioredis');
 const { setupWSConnection, docs } = require('y-websocket/bin/utils');
 
-const PORT = Number(process.env.PORT || 1234);
-const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
-const REDIS_PORT = Number(process.env.REDIS_PORT || 6379);
-const SPRING_AUTH_URL = process.env.SPRING_AUTH_URL || 'http://localhost:8080/auth/validate';
-const SNAPSHOT_ENDPOINT = process.env.SNAPSHOT_ENDPOINT || 'http://localhost:8080/internal/files';
+const PORT = Number(process.env.PORT || 1235);
+const SPRING_AUTH_URL = process.env.SPRING_AUTH_URL || 'http://localhost:8081/auth/validate';
+const SNAPSHOT_ENDPOINT = process.env.SNAPSHOT_ENDPOINT || 'http://localhost:8081/internal/files';
 const ALLOW_ANONYMOUS = (process.env.ALLOW_ANONYMOUS || 'true').toLowerCase() === 'true';
 const SNAPSHOT_INTERVAL_MS = Number(process.env.SNAPSHOT_INTERVAL_MS || 30_000);
 const ROOM_TTL_SECONDS = Number(process.env.ROOM_TTL_SECONDS || 24 * 60 * 60);
+const REDIS_OPTIONS = redisOptionsFromEnv();
 
 const hydratedDocs = new Set();
 const persistenceAttached = new Set();
@@ -20,8 +19,7 @@ const lastFlushMs = new Map();
 let redisAvailable = false;
 
 const redis = new Redis({
-  host: REDIS_HOST,
-  port: REDIS_PORT,
+  ...REDIS_OPTIONS,
   lazyConnect: true,
   maxRetriesPerRequest: 1,
   enableReadyCheck: true
@@ -261,6 +259,27 @@ async function flushSnapshots() {
 
 function redisKey(roomCode, fileId) {
   return `yjs:${roomCode}:${fileId}:updates`;
+}
+
+function redisOptionsFromEnv() {
+  if (process.env.REDIS_URL) {
+    const parsed = new URL(process.env.REDIS_URL);
+    return {
+      host: parsed.hostname,
+      port: Number(parsed.port || 6379),
+      username: parsed.username ? decodeURIComponent(parsed.username) : undefined,
+      password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
+      tls: parsed.protocol === 'rediss:' ? {} : undefined
+    };
+  }
+
+  const useTls = (process.env.REDIS_TLS || 'false').toLowerCase() === 'true';
+  return {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: Number(process.env.REDIS_PORT || 6379),
+    password: process.env.REDIS_PASSWORD || undefined,
+    tls: useTls ? {} : undefined
+  };
 }
 
 function looksLikeBase64(value) {

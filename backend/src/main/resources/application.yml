@@ -10,6 +10,9 @@ spring:
     redis:
       host: ${SPRING_REDIS_HOST:localhost}
       port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:}
+      ssl:
+        enabled: ${SPRING_REDIS_SSL:false}
       timeout: 750ms
   flyway:
     enabled: ${SPRING_FLYWAY_ENABLED:false}
@@ -19,14 +22,14 @@ spring:
       path: /h2-console
   jpa:
     hibernate:
-      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:create}
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
     open-in-view: false
     properties:
       hibernate:
         jdbc:
           time_zone: UTC
 server:
-  port: 8080
+  port: ${SERVER_PORT:${PORT:8081}}
 
 pearprogram:
   jwt:
@@ -34,7 +37,7 @@ pearprogram:
   rooms:
     ttl-hours: 24
   yjs:
-    server-url: ${YJS_SERVER_URL:ws://localhost:1234}
+    server-url: ${YJS_SERVER_URL:ws://localhost:1235}
   ai:
     placeholder-mode: ${PEARPROGRAM_AI_PLACEHOLDER:true}
 

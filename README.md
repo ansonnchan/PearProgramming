@@ -59,9 +59,9 @@ npm run dev
 Default local endpoints:
 
 - Frontend: `http://localhost:5173`
-- Spring API/STOMP: `http://localhost:8080`
-- Node Yjs WebSocket: `ws://localhost:1234`
-- H2 console in no-Docker mode: `http://localhost:8080/h2-console`
+- Spring API/STOMP: `http://localhost:8081`
+- Node Yjs WebSocket: `ws://localhost:1235`
+- H2 console in no-Docker mode: `http://localhost:8081/h2-console`
 
 ## Architecture Notes
 

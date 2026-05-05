@@ -5,7 +5,9 @@ import com.pearprogram.ai.AiAnnotationDto;
 import com.pearprogram.ai.AiAnnotationService;
 import com.pearprogram.chat.ChatMessage;
 import com.pearprogram.chat.ChatMessageRepository;
+import com.pearprogram.rooms.EphemeralRoomStateService;
 import com.pearprogram.rooms.Room;
+import com.pearprogram.rooms.RoomAccessDto;
 import com.pearprogram.rooms.RoomRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -25,6 +27,7 @@ import java.util.UUID;
 public class RoomEventController {
     private final SimpMessagingTemplate messagingTemplate;
     private final RoomRepository roomRepository;
+    private final EphemeralRoomStateService roomStateService;
     private final ChatMessageRepository chatMessageRepository;
     private final AiParticipantService aiParticipantService;
     private final AiAnnotationService aiAnnotationService;
@@ -33,6 +36,7 @@ public class RoomEventController {
     public RoomEventController(
             SimpMessagingTemplate messagingTemplate,
             RoomRepository roomRepository,
+            EphemeralRoomStateService roomStateService,
             ChatMessageRepository chatMessageRepository,
             AiParticipantService aiParticipantService,
             AiAnnotationService aiAnnotationService,
@@ -40,6 +44,7 @@ public class RoomEventController {
     ) {
         this.messagingTemplate = messagingTemplate;
         this.roomRepository = roomRepository;
+        this.roomStateService = roomStateService;
         this.chatMessageRepository = chatMessageRepository;
         this.aiParticipantService = aiParticipantService;
         this.aiAnnotationService = aiAnnotationService;
@@ -63,7 +68,12 @@ public class RoomEventController {
         ));
 
         if (inbound.content() != null && inbound.content().toUpperCase().contains("@AI")) {
-            ChatMessage aiMessage = persistChat(room, aiParticipantService.chatResponse(inbound.displayName(), inbound.currentFile()), true);
+            ChatMessage aiMessage = persistChat(room, aiParticipantService.chatResponse(
+                    inbound.displayName(),
+                    inbound.currentFile(),
+                    inbound.content(),
+                    inbound.currentLine()
+            ), true);
             messagingTemplate.convertAndSend("/topic/room/" + code + "/chat", new ChatOutboundMessage(
                     aiMessage.getId(),
                     null,
@@ -72,7 +82,9 @@ public class RoomEventController {
                     true,
                     aiMessage.getCreatedAt()
             ));
-            maybeCreatePlaceholderAnnotation(room, inbound);
+            if (aiParticipantService.usesPlaceholderResponses()) {
+                maybeCreatePlaceholderAnnotation(room, inbound);
+            }
         }
     }
 
@@ -83,7 +95,24 @@ public class RoomEventController {
 
     @MessageMapping("/room/{code}/members")
     public void member(@DestinationVariable String code, MemberEvent event) {
-        messagingTemplate.convertAndSend("/topic/room/" + code + "/members", event);
+        MemberEvent outbound = event;
+        if ("joined".equals(event.type())) {
+            outbound = withRoomState(event, roomStateService.joinRoom(code, event.userId()));
+        } else if ("left".equals(event.type())) {
+            outbound = withRoomState(event, roomStateService.leaveRoom(code, event.userId()));
+        } else if ("lead-transferred".equals(event.type())) {
+            String nextLead = event.leadUserId() == null || event.leadUserId().isBlank()
+                    ? event.targetUserId()
+                    : event.leadUserId();
+            outbound = withRoomState(event, roomStateService.transferLead(code, nextLead));
+        } else if ("lock-changed".equals(event.type()) && event.locked() != null) {
+            outbound = withRoomState(event, roomStateService.setLocked(code, event.userId(), event.locked()));
+        } else if ("room-closed".equals(event.type())) {
+            roomStateService.clearRuntimeState(code);
+        } else {
+            outbound = withRoomState(event, roomStateService.roomAccess(code, event.userId()));
+        }
+        messagingTemplate.convertAndSend("/topic/room/" + code + "/members", outbound);
     }
 
     @MessageMapping("/room/{code}/project-switch")
@@ -141,5 +170,20 @@ public class RoomEventController {
         } catch (IllegalArgumentException ignored) {
             // Local fallback file ids are not UUIDs, so the frontend handles placeholder annotations itself.
         }
+    }
+
+    private MemberEvent withRoomState(MemberEvent event, RoomAccessDto state) {
+        return new MemberEvent(
+                event.type(),
+                event.userId(),
+                event.displayName(),
+                event.color(),
+                event.avatarUrl(),
+                state.leadUserId(),
+                event.targetUserId(),
+                event.targetUserName(),
+                state.locked(),
+                event.at()
+        );
     }
 }

@@ -61,6 +61,12 @@ public class RoomService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Room not found"));
     }
 
+    public RoomAccessDto getRoomAccess(String code, String userId) {
+        roomRepository.findByCode(code)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Room not found"));
+        return roomStateService.roomAccess(code, userId);
+    }
+
     private String allocateCode() {
         for (int attempt = 0; attempt < 5; attempt++) {
             String code = roomCodeGenerator.generateDefault();
