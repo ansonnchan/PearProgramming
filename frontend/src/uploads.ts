@@ -234,7 +234,7 @@ function blockedReasonFor(file: File, path: string) {
     return 'Project build, dependency, source-control, and app bundle folders are skipped.';
   }
 
-  if (BLOCKED_FILENAMES.has(name)) {
+  if (BLOCKED_FILENAMES.has(name) || name.startsWith('._')) {
     return 'System files are skipped.';
   }
 
@@ -246,11 +246,11 @@ function blockedReasonFor(file: File, path: string) {
     return 'Binary, executable, archive, and media files are skipped.';
   }
 
-  if (ALLOWED_FILENAMES.has(name) || ALLOWED_EXTENSIONS.has(extension)) {
-    return null;
+  if (file.size === 0 && name.startsWith('.') && !ALLOWED_FILENAMES.has(name)) {
+    return 'Empty hidden metadata files are skipped.';
   }
 
-  return 'Only supported project files can be uploaded.';
+  return null;
 }
 
 function extensionForPath(path: string) {

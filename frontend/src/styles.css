@@ -100,9 +100,9 @@ button:disabled {
 
 .landing-hero-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(380px, 480px);
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
   align-items: center;
-  gap: 46px;
+  gap: 34px;
 }
 
 .landing-copy {
@@ -138,6 +138,7 @@ button:disabled {
 
 .landing-panel {
   width: 100%;
+  max-width: 420px;
   padding: 30px;
   border: 1px solid rgb(86 124 53 / 20%);
   border-radius: 20px;
@@ -145,7 +146,7 @@ button:disabled {
   color: #24331e;
   box-shadow: 0 24px 70px rgb(72 93 52 / 20%);
   backdrop-filter: blur(12px);
-  transform: translate(160px, -24px);
+  transform: translate(78px, -28px);
 }
 
 .room-card-heading {
@@ -260,7 +261,7 @@ button:disabled {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(190px, 1fr) auto minmax(190px, 1fr);
+  grid-template-columns: minmax(220px, 1fr) auto minmax(190px, 1fr);
   align-items: center;
   gap: 10px;
   border-bottom: 1px solid #dedbd3;
@@ -270,18 +271,37 @@ button:disabled {
 .brand {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 9px;
   padding-left: 14px;
-  color: #24292f;
-  font-size: 13px;
-  font-weight: 700;
+  color: #21351b;
+  font-size: 16px;
+  font-weight: 900;
   min-width: 0;
+}
+
+.brand-link {
+  width: fit-content;
+  max-width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.brand-link:hover span {
+  color: #4f7d28;
+}
+
+.brand span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand-logo {
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
+  width: 31px;
+  height: 31px;
   border-radius: 50%;
   object-fit: cover;
   box-shadow: 0 1px 4px rgb(55 83 20 / 18%);
@@ -1312,6 +1332,8 @@ button:disabled {
   }
 
   .landing-panel {
+    max-width: min(430px, 100%);
+    justify-self: center;
     transform: none;
   }
 
@@ -1329,7 +1351,7 @@ button:disabled {
   }
 
   .topbar {
-    grid-template-columns: 170px minmax(0, 1fr);
+    grid-template-columns: 190px minmax(0, 1fr);
     grid-template-rows: 44px 40px;
   }
 
@@ -1396,6 +1418,12 @@ button:disabled {
 
   .brand {
     padding-left: 0;
+    font-size: 14px;
+  }
+
+  .brand-logo {
+    width: 27px;
+    height: 27px;
   }
 
   .room-header-center {

@@ -5,6 +5,16 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localho
 export const STOMP_URL = import.meta.env.VITE_STOMP_URL ?? 'http://localhost:8081/ws';
 export const YJS_URL = import.meta.env.VITE_YJS_URL ?? 'ws://localhost:1235';
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(method: string, path: string, status: number, body: string) {
+    super(`${method} ${path} failed with ${status}${body ? `: ${body}` : ''}`);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 export async function bootstrapDemoRoom(): Promise<BootstrapResponse> {
   return postJson<BootstrapResponse>('/api/bootstrap', {});
 }
@@ -18,11 +28,11 @@ export async function issueDevToken(userId: string, displayName: string): Promis
 }
 
 export async function getRoom(code: string): Promise<Room> {
-  return getJson<Room>(`/api/rooms/${code}`);
+  return getJson<Room>(`/api/rooms/${encodeURIComponent(code)}`);
 }
 
 export async function getRoomAccess(code: string, userId: string): Promise<RoomAccess> {
-  return getJson<RoomAccess>(`/api/rooms/${code}/access?userId=${encodeURIComponent(userId)}`);
+  return getJson<RoomAccess>(`/api/rooms/${encodeURIComponent(code)}/access?userId=${encodeURIComponent(userId)}`);
 }
 
 export async function createWorkspace(name: string): Promise<Workspace> {
@@ -65,11 +75,11 @@ export async function importPlaceholderRepository(workspaceId: string, owner: st
 }
 
 export async function listChatHistory(code: string): Promise<ChatMessage[]> {
-  return getJson<ChatMessage[]>(`/api/rooms/${code}/chat`);
+  return getJson<ChatMessage[]>(`/api/rooms/${encodeURIComponent(code)}/chat`);
 }
 
 export async function listAnnotations(code: string, fileId: string): Promise<AiAnnotation[]> {
-  return getJson<AiAnnotation[]>(`/api/rooms/${code}/files/${fileId}/annotations`);
+  return getJson<AiAnnotation[]>(`/api/rooms/${encodeURIComponent(code)}/files/${fileId}/annotations`);
 }
 
 export async function dismissAnnotation(annotationId: string): Promise<void> {
@@ -84,7 +94,7 @@ export async function dismissAnnotation(annotationId: string): Promise<void> {
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`);
   if (!response.ok) {
-    throw new Error(`GET ${path} failed with ${response.status}`);
+    throw await toApiError('GET', path, response);
   }
   return response.json() as Promise<T>;
 }
@@ -96,7 +106,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body)
   });
   if (!response.ok) {
-    throw new Error(`POST ${path} failed with ${response.status}`);
+    throw await toApiError('POST', path, response);
   }
   return response.json() as Promise<T>;
 }
@@ -108,7 +118,17 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body)
   });
   if (!response.ok) {
-    throw new Error(`PATCH ${path} failed with ${response.status}`);
+    throw await toApiError('PATCH', path, response);
   }
   return response.json() as Promise<T>;
+}
+
+async function toApiError(method: string, path: string, response: Response) {
+  let body = '';
+  try {
+    body = await response.text();
+  } catch {
+    body = '';
+  }
+  return new ApiError(method, path, response.status, body.slice(0, 300));
 }

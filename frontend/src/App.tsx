@@ -23,6 +23,7 @@ import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
 import { WebsocketProvider } from 'y-websocket';
 import {
+  ApiError,
   createFile,
   createRoom,
   createWorkspace,
@@ -167,6 +168,7 @@ export default function App() {
   const annotationWidgetsRef = useRef<Map<string, any>>(new Map());
   const cursorSentAtRef = useRef(0);
   const saveTimerRef = useRef<number | null>(null);
+  const suppressEditorChangeRef = useRef(false);
   const pendingUploadRef = useRef<{ proposalId: string; candidates: UploadCandidate[]; newFolder: string; openUploaded: boolean } | null>(null);
   const committingProposalRef = useRef<string | null>(null);
   const roomRef = useRef<Room | null>(null);
@@ -199,8 +201,11 @@ export default function App() {
       const joinedRoom = await getRoom(code);
       const joinedFiles = await listFiles(joinedRoom.workspaceId);
       openRoom(joinedRoom, joinedFiles, replaceUrl, access.leadUserId, access.locked);
-    } catch {
-      setLandingError(`Could not find room ${code}.`);
+    } catch (error) {
+      console.warn('Join room failed', { code, error });
+      setLandingError(error instanceof ApiError && error.status === 404
+        ? `Could not find room ${code}.`
+        : 'Could not join this room. Please check the room code and your connection.');
     } finally {
       setJoiningRoom(false);
     }
@@ -214,10 +219,9 @@ export default function App() {
       const workspace = await createWorkspace(`Pear room ${formatRoomNameDate(new Date())}`);
       const createdRoom = await createRoom(workspace.id);
       openRoom(createdRoom, [], true, user.id, false);
-    } catch {
-      const fallbackRoom = { ...FALLBACK_ROOM, code: randomRoomCode() };
-      openRoom(fallbackRoom, [], true, user.id, false);
-      setLandingError('Backend is offline, so this room is local-only for now.');
+    } catch (error) {
+      console.warn('Create room failed', error);
+      setLandingError('Could not create a shared room. Please check the backend URL and try again.');
     } finally {
       setCreatingRoom(false);
     }
@@ -266,6 +270,9 @@ export default function App() {
     monaco.editor.setTheme('pear-github-dark');
 
     editor.onDidChangeModelContent(() => {
+      if (suppressEditorChangeRef.current) {
+        return;
+      }
       const currentFile = activeFileRef.current;
       if (!currentFile) {
         return;
@@ -475,7 +482,9 @@ export default function App() {
 
   useEffect(() => {
     const editor = editorRef.current as any;
-    if (!editor || !room || !activeFile) {
+    const currentRoom = roomRef.current;
+    const currentFile = activeFileRef.current;
+    if (!editor || !currentRoom || !currentFile) {
       return;
     }
 
@@ -484,34 +493,56 @@ export default function App() {
     ydocRef.current?.destroy();
 
     const ydoc = new Y.Doc();
-    const provider = new WebsocketProvider(YJS_URL, `${room.code}/${activeFile.id}`, ydoc, authToken ? { params: { token: authToken } } : undefined);
+    const provider = new WebsocketProvider(YJS_URL, `${currentRoom.code}/${currentFile.id}`, ydoc, authToken ? { params: { token: authToken } } : undefined);
     const yText = ydoc.getText('monaco');
-    if (yText.length === 0 && activeFile.content) {
-      yText.insert(0, activeFile.content);
-    }
 
     const model = editor.getModel();
-    if (model && model.getValue() !== activeFile.content) {
-      model.setValue(activeFile.content);
+    if (!model) {
+      provider.destroy();
+      ydoc.destroy();
+      return;
     }
 
+    const shouldSeedLocalText = currentRoom.id === FALLBACK_ROOM.id || !isUuid(currentFile.id);
+    if (shouldSeedLocalText && yText.length === 0 && currentFile.content) {
+      yText.insert(0, currentFile.content);
+    }
+
+    suppressEditorChangeRef.current = true;
     const binding = new MonacoBinding(yText, model, new Set([editor]), provider.awareness);
+    const suppressTimer = window.setTimeout(() => {
+      suppressEditorChangeRef.current = false;
+    }, 0);
     provider.awareness.setLocalStateField('user', { name: user.name, color: user.color });
     provider.on('status', ({ status }: { status: string }) => {
       setSyncStatus(status === 'connected' ? 'Yjs synced' : 'Yjs reconnecting');
     });
-    provider.awareness.on('change', () => setPeerCount(provider.awareness.getStates().size));
+    let seededAfterSync = false;
+    const seedEmptySyncedDoc = (synced: boolean) => {
+      if (!synced || seededAfterSync || shouldSeedLocalText || yText.length > 0 || !currentFile.content) {
+        return;
+      }
+      seededAfterSync = true;
+      yText.insert(0, currentFile.content);
+    };
+    provider.on('sync', seedEmptySyncedDoc);
+    const updatePeerCount = () => setPeerCount(provider.awareness.getStates().size);
+    provider.awareness.on('change', updatePeerCount);
 
     bindingRef.current = binding;
     providerRef.current = provider;
     ydocRef.current = ydoc;
 
     return () => {
+      window.clearTimeout(suppressTimer);
+      suppressEditorChangeRef.current = false;
+      provider.off('sync', seedEmptySyncedDoc);
+      provider.awareness.off('change', updatePeerCount);
       binding.destroy();
       provider.destroy();
       ydoc.destroy();
     };
-  }, [activeFile, authToken, room, user.color, user.name]);
+  }, [activeFile?.id, authToken, room?.code, user.color, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -639,10 +670,10 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand">
+        <button className="brand brand-link" onClick={() => returnToLanding()} type="button">
           <img alt="" className="brand-logo" src={pearLogoUrl} />
           <span>PearProgramming</span>
-        </div>
+        </button>
         <div className="room-header-center">
           <button className="room-code-chip" onClick={copyRoomCode} title="Copy room code" type="button">
             <span>Room Code: {room.code}</span>
@@ -789,7 +820,7 @@ export default function App() {
                 }}
                 path={activeFile.path}
                 theme="pear-github-dark"
-                value={activeFile.content}
+                defaultValue={activeFile.content}
               />
             ) : (
               <div className="empty-editor">
@@ -1279,10 +1310,7 @@ export default function App() {
       return;
     }
 
-    const path = window.prompt('New file path', 'index.js')?.trim();
-    if (!path) {
-      return;
-    }
+    const path = uniqueFilePath(files.map((file) => file.path), 'new-file', 'txt');
 
     try {
       const created = await createFile(currentRoom.workspaceId, path, '', inferLanguage(path));
@@ -1303,21 +1331,15 @@ export default function App() {
       return;
     }
 
-    const path = window.prompt('New folder path', 'new-folder')?.trim();
-    if (!path) {
-      return;
-    }
-
-    const markerPath = `${path.replace(/\/$/, '')}/.gitkeep`;
+    const folderPath = uniqueFolderPath(files.map((file) => file.path), 'new-folder');
+    const markerPath = `${folderPath}/.gitkeep`;
     try {
       const created = await createFile(currentRoom.workspaceId, markerPath, '', 'plaintext');
       setFiles((current) => mergeFiles(current, [created]).sort(sortByPath));
-      openFileTab(created.id);
       expandForPath(markerPath);
     } catch {
       const local = createLocalFile(markerPath, currentRoom.workspaceId);
       setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
-      openFileTab(local.id);
       expandForPath(markerPath);
     }
   }
@@ -1917,6 +1939,10 @@ function TreeRow({
   depth?: number;
 }) {
   if (node.file) {
+    if (node.name === '.gitkeep') {
+      return null;
+    }
+
     return (
       <button
         className={`tree-row file-row ${activeFileId === node.file.id ? 'file-row-active' : ''}`}
@@ -2117,21 +2143,35 @@ function foldersForPaths(paths: string[]) {
   return folders;
 }
 
+function uniqueFilePath(existingPaths: string[], basenameWithoutExtension: string, extension: string) {
+  const existing = new Set(existingPaths);
+  const suffix = extension ? `.${extension.replace(/^\./, '')}` : '';
+  let candidate = `${basenameWithoutExtension}${suffix}`;
+  let index = 2;
+  while (existing.has(candidate)) {
+    candidate = `${basenameWithoutExtension}-${index}${suffix}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function uniqueFolderPath(existingPaths: string[], basename: string) {
+  const existingFolders = foldersForPaths(existingPaths);
+  let candidate = basename;
+  let index = 2;
+  while (existingFolders.has(candidate) || existingPaths.some((path) => path === candidate || path.startsWith(`${candidate}/`))) {
+    candidate = `${basename}-${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
 function normalizeRoomCode(value: string) {
-  return value.trim().toUpperCase();
+  return value.trim().toUpperCase().replace(/[\s-]+/g, '');
 }
 
 function isValidRoomCode(value: string) {
   return /^[A-Z0-9]{6}$/.test(value);
-}
-
-function randomRoomCode() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let index = 0; index < 6; index += 1) {
-    code += alphabet[Math.floor(Math.random() * alphabet.length)];
-  }
-  return code;
 }
 
 function formatRoomNameDate(date: Date) {
