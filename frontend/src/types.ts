@@ -13,6 +13,15 @@ export type Room = {
   expiresAt: string;
 };
 
+export type RoomAccess = {
+  canJoin: boolean;
+  reason: 'full' | 'locked' | null;
+  locked: boolean;
+  memberCount: number;
+  maxUsers: number;
+  leadUserId: string | null;
+};
+
 export type WorkspaceFile = {
   id: string;
   workspaceId: string;

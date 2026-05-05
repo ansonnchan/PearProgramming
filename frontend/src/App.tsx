@@ -10,11 +10,12 @@ import {
   Folder,
   FolderPlus,
   ImagePlus,
-  LogIn,
+  Lock,
   LogOut,
   MessageSquare,
   Send,
   Trash2,
+  Unlock,
   Upload,
   UserRound,
   Wifi,
@@ -32,6 +33,7 @@ import {
   createWorkspace,
   dismissAnnotation,
   getRoom,
+  getRoomAccess,
   issueDevToken,
   listAnnotations,
   listChatHistory,
@@ -43,6 +45,7 @@ import {
 } from './api';
 import { inferLanguage, languageClass } from './language';
 import pearLogoUrl from '../assets/favicon.png';
+import pearChibiUrl from '../assets/pear_chibi.jpg';
 import type { UploadCandidate, UploadReadResult } from './uploads';
 import { projectNameForPaths, readUploadCandidates, UPLOAD_ACCEPT } from './uploads';
 import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, WorkspaceFile } from './types';
@@ -83,7 +86,7 @@ type PendingSwitch = {
 };
 
 type MemberRealtimeEvent = {
-  type: 'joined' | 'left' | 'presence-sync' | 'lead-sync' | 'lead-transferred' | 'room-closed';
+  type: 'joined' | 'left' | 'presence-sync' | 'lead-sync' | 'lead-transferred' | 'lock-changed' | 'room-closed';
   userId: string;
   displayName?: string;
   color?: string;
@@ -91,8 +94,11 @@ type MemberRealtimeEvent = {
   leadUserId?: string;
   targetUserId?: string;
   targetUserName?: string;
+  locked?: boolean;
   at?: string;
 };
+
+type DisplayChatMessage = ChatMessage & { system?: boolean };
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
 
@@ -101,7 +107,7 @@ export default function App() {
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [openFileIds, setOpenFileIds] = useState<string[]>([]);
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<DisplayChatMessage[]>([]);
   const [annotations, setAnnotations] = useState<AiAnnotation[]>([]);
   const [cursors, setCursors] = useState<Record<string, CursorMessage>>({});
   const [presenceMembers, setPresenceMembers] = useState<Record<string, Member>>({});
@@ -125,6 +131,8 @@ export default function App() {
   const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
   const [uploadNotice, setUploadNotice] = useState('');
   const [leadUserId, setLeadUserId] = useState<string | null>(null);
+  const [roomLocked, setRoomLocked] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
   const [delegateOpen, setDelegateOpen] = useState(false);
   const [delegateUserId, setDelegateUserId] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
@@ -161,14 +169,15 @@ export default function App() {
   const activeFileRef = useRef<WorkspaceFile | null>(null);
   const stompRef = useRef<Client | null>(null);
   const leadUserIdRef = useRef<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const joinRoom = useCallback(async (rawCode: string, replaceUrl = true) => {
     const code = normalizeRoomCode(rawCode);
-    if (!code) {
-      setLandingError('Enter a room code to join.');
+    if (!isValidRoomCode(code)) {
+      setLandingError('Please enter in a valid pear room code');
       return;
     }
 
@@ -176,15 +185,22 @@ export default function App() {
     setLandingError('');
     setLandingNotice('');
     try {
+      const access = await getRoomAccess(code, user.id);
+      if (!access.canJoin) {
+        showToast(access.reason === 'locked'
+          ? 'Room is Locked. Contact the room owner if this is a mistake.'
+          : 'Room is Full.');
+        return;
+      }
       const joinedRoom = await getRoom(code);
       const joinedFiles = await listFiles(joinedRoom.workspaceId);
-      openRoom(joinedRoom, joinedFiles, replaceUrl, null);
+      openRoom(joinedRoom, joinedFiles, replaceUrl, access.leadUserId, access.locked);
     } catch {
       setLandingError(`Could not find room ${code}.`);
     } finally {
       setJoiningRoom(false);
     }
-  }, []);
+  }, [user.id]);
 
   const handleCreateRoom = useCallback(async () => {
     setCreatingRoom(true);
@@ -193,10 +209,10 @@ export default function App() {
     try {
       const workspace = await createWorkspace(`Pear room ${formatRoomNameDate(new Date())}`);
       const createdRoom = await createRoom(workspace.id);
-      openRoom(createdRoom, [], true, user.id);
+      openRoom(createdRoom, [], true, user.id, false);
     } catch {
       const fallbackRoom = { ...FALLBACK_ROOM, code: randomRoomCode() };
-      openRoom(fallbackRoom, [], true, user.id);
+      openRoom(fallbackRoom, [], true, user.id, false);
       setLandingError('Backend is offline, so this room is local-only for now.');
     } finally {
       setCreatingRoom(false);
@@ -302,8 +318,9 @@ export default function App() {
   }, [leadUserId]);
 
   useEffect(() => {
-    folderInputRef.current?.setAttribute('webkitdirectory', '');
-    folderInputRef.current?.setAttribute('directory', '');
+    if (folderInputRef.current) {
+      configureFolderInput(folderInputRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -416,6 +433,7 @@ export default function App() {
             color: user.color,
             avatarUrl: user.avatarUrl,
             leadUserId: leadUserIdRef.current,
+            locked: roomLocked,
             at: new Date().toISOString()
           })
         });
@@ -438,6 +456,7 @@ export default function App() {
             color: user.color,
             avatarUrl: user.avatarUrl,
             leadUserId: leadUserIdRef.current,
+            locked: roomLocked,
             at: new Date().toISOString()
           })
         });
@@ -573,16 +592,19 @@ export default function App() {
 
   if (!room) {
     return (
-      <LandingPage
-        code={landingCode}
-        creating={creatingRoom}
-        error={landingError}
-        joining={joiningRoom}
-        notice={landingNotice}
-        onCodeChange={setLandingCode}
-        onCreate={handleCreateRoom}
-        onJoin={() => void joinRoom(landingCode)}
-      />
+      <>
+        <LandingPage
+          code={landingCode}
+          creating={creatingRoom}
+          error={landingError}
+          joining={joiningRoom}
+          notice={landingNotice}
+          onCodeChange={setLandingCode}
+          onCreate={handleCreateRoom}
+          onJoin={() => void joinRoom(landingCode)}
+        />
+        <Toast message={toastMessage} />
+      </>
     );
   }
 
@@ -597,7 +619,6 @@ export default function App() {
           <span>PearProgramming</span>
         </div>
         <div className="room-header-center">
-          <span className="project-label">{activeProjectName}</span>
           <button className="room-code-chip" onClick={copyRoomCode} title="Copy room code" type="button">
             <span>Room Code: {room.code}</span>
             <Copy size={13} />
@@ -630,6 +651,12 @@ export default function App() {
               </span>
             ))}
           </div>
+          {isLeadPear && (
+            <button className="topbar-button" onClick={handleToggleRoomLock} type="button">
+              {roomLocked ? <Unlock size={14} /> : <Lock size={14} />}
+              <span>{roomLocked ? 'Unlock Room' : 'Lock Room'}</span>
+            </button>
+          )}
           <button className="topbar-button" onClick={handleLeaveRoom} type="button">
             <LogOut size={14} />
             <span>Leave Room</span>
@@ -659,11 +686,11 @@ export default function App() {
           <div className="upload-actions">
             <button className="upload-button" onClick={() => fileInputRef.current?.click()} type="button">
               <Upload size={14} />
-              <span>Upload files</span>
+              <span>Upload File</span>
             </button>
-            <button className="upload-button" onClick={() => folderInputRef.current?.click()} type="button">
+            <button className="upload-button" onClick={openFolderPicker} type="button">
               <FolderPlus size={14} />
-              <span>Upload folder</span>
+              <span>Upload Folder</span>
             </button>
           </div>
           <input accept={UPLOAD_ACCEPT} className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, false)} ref={fileInputRef} type="file" />
@@ -727,11 +754,11 @@ export default function App() {
                   <div className="empty-editor-actions">
                     <button onClick={() => fileInputRef.current?.click()} type="button">
                       <Upload size={16} />
-                      Upload files
+                      Upload File
                     </button>
-                    <button onClick={() => folderInputRef.current?.click()} type="button">
+                    <button onClick={openFolderPicker} type="button">
                       <FolderPlus size={16} />
-                      Upload folder
+                      Upload Folder
                     </button>
                   </div>
                 </div>
@@ -753,12 +780,18 @@ export default function App() {
             </div>
             <div className="messages">
               {messages.map((message) => (
-                <article className={`message ${message.ai ? 'message-ai' : ''}`} key={message.id}>
-                  <div className="message-meta">
-                    <span>{message.displayName}</span>
-                    <span>{formatPacificTime(message.createdAt)}</span>
-                  </div>
-                  <p>{message.content}</p>
+                <article className={`message ${message.ai ? 'message-ai' : ''} ${message.system ? 'message-system' : ''}`} key={message.id}>
+                  {message.system ? (
+                    <p>{message.content}</p>
+                  ) : (
+                    <>
+                      <div className="message-meta">
+                        <span>{message.displayName}</span>
+                        <span>{formatPacificTime(message.createdAt)}</span>
+                      </div>
+                      <p>{message.content}</p>
+                    </>
+                  )}
                 </article>
               ))}
             </div>
@@ -877,10 +910,11 @@ export default function App() {
           </section>
         </div>
       )}
+      <Toast message={toastMessage} />
     </main>
   );
 
-  function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean, nextLeadUserId: string | null) {
+  function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean, nextLeadUserId: string | null, locked: boolean) {
     const sortedFiles = nextFiles.sort(sortByPath);
     const firstFileId = sortedFiles[0]?.id ?? null;
     setRoom(nextRoom);
@@ -893,6 +927,7 @@ export default function App() {
     setCursors({});
     setPresenceMembers({});
     setLeadUserId(nextLeadUserId);
+    setRoomLocked(locked);
     setDelegateOpen(false);
     setDelegateUserId('');
     setUploadNotice('');
@@ -962,6 +997,39 @@ export default function App() {
     }
   }
 
+  function showToast(message: string) {
+    setToastMessage(message);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => setToastMessage(''), 3600);
+  }
+
+  function addSystemMessage(content: string) {
+    setMessages((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        userId: null,
+        displayName: 'System',
+        content,
+        ai: false,
+        system: true,
+        createdAt: new Date().toISOString()
+      }
+    ].slice(-60));
+  }
+
+  function openFolderPicker() {
+    const input = folderInputRef.current;
+    if (!input) {
+      return;
+    }
+
+    configureFolderInput(input);
+    input.click();
+  }
+
   function openFileTab(fileId: string) {
     setOpenFileIds((current) => (current.includes(fileId) ? current : [...current, fileId]));
     setActiveFileId(fileId);
@@ -988,6 +1056,7 @@ export default function App() {
     setCursors({});
     setPresenceMembers({});
     setLeadUserId(null);
+    setRoomLocked(false);
     setDelegateOpen(false);
     setDelegateUserId('');
     setPendingSwitch(null);
@@ -1039,6 +1108,25 @@ export default function App() {
       at: new Date().toISOString()
     });
     returnToLanding('Room closed.');
+  }
+
+  function handleToggleRoomLock() {
+    if (!isLeadPear) {
+      return;
+    }
+
+    const nextLocked = !roomLocked;
+    setRoomLocked(nextLocked);
+    publishMemberEvent({
+      type: 'lock-changed',
+      userId: user.id,
+      displayName: user.name,
+      color: user.color,
+      avatarUrl: user.avatarUrl,
+      leadUserId: user.id,
+      locked: nextLocked,
+      at: new Date().toISOString()
+    });
   }
 
   function confirmDelegateAndLeave() {
@@ -1116,16 +1204,18 @@ export default function App() {
     }
 
     const uploadResult = await readUploadCandidates(input.files);
-    const { candidates } = uploadResult;
     input.value = '';
-    setUploadNotice(uploadNoticeText(uploadResult));
+    const { candidates, renamedCount } = folderUpload
+      ? { candidates: uploadResult.candidates, renamedCount: 0 }
+      : safeUploadPaths(uploadResult.candidates, files.map((file) => file.path));
+    setUploadNotice(uploadNoticeText(uploadResult, renamedCount));
     if (candidates.length === 0) {
       setSaveState('error');
       return;
     }
 
     const newFolder = projectNameForPaths(candidates.map((file) => file.path));
-    const isSwitch = files.length > 0 && (folderUpload || newFolder !== activeProjectName);
+    const isSwitch = files.length > 0 && folderUpload;
     const requiredUserIds = humanMembers.map((member) => member.id);
 
     if (isSwitch && requiredUserIds.length > 1 && stompRef.current?.connected) {
@@ -1350,8 +1440,13 @@ export default function App() {
     if (event.type === 'room-closed') {
       if (event.userId !== user.id) {
         returnToLanding('The Lead Pear closed this room.');
+        showToast('The Lead Pear closed this room.');
       }
       return;
+    }
+
+    if (typeof event.locked === 'boolean') {
+      setRoomLocked(event.locked);
     }
 
     if (event.type === 'lead-transferred' || event.type === 'lead-sync') {
@@ -1361,7 +1456,14 @@ export default function App() {
       return;
     }
 
+    if (event.type === 'lock-changed') {
+      return;
+    }
+
     if (event.type === 'left') {
+      if (event.userId !== user.id) {
+        addSystemMessage(`${displayNameOrPear(event.displayName)} has left the room`);
+      }
       setPresenceMembers((current) => {
         const next = { ...current };
         delete next[event.userId];
@@ -1392,6 +1494,7 @@ export default function App() {
     }
 
     if (event.type === 'joined' && event.userId !== user.id) {
+      addSystemMessage(`${displayNameOrPear(event.displayName)} has joined the room`);
       const currentRoom = roomRef.current;
       if (!currentRoom) {
         return;
@@ -1406,6 +1509,7 @@ export default function App() {
           color: user.color,
           avatarUrl: user.avatarUrl,
           leadUserId: leadUserIdRef.current,
+          locked: roomLocked,
           targetUserId: event.userId,
           at: new Date().toISOString()
         })
@@ -1421,6 +1525,7 @@ export default function App() {
             color: user.color,
             avatarUrl: user.avatarUrl,
             leadUserId: user.id,
+            locked: roomLocked,
             targetUserId: event.userId,
             at: new Date().toISOString()
           })
@@ -1504,6 +1609,8 @@ export default function App() {
           displayName: updated.name,
           color: updated.color,
           avatarUrl: updated.avatarUrl,
+          leadUserId: leadUserIdRef.current,
+          locked: roomLocked,
           at: new Date().toISOString()
         })
       });
@@ -1532,33 +1639,30 @@ function LandingPage({
 }) {
   return (
     <main className="landing-shell">
+      <img alt="" className="landing-chibi" src={pearChibiUrl} />
       <section className="landing-hero">
-        <nav className="landing-nav">
-          <div className="landing-brand">
-            <img alt="" className="brand-logo brand-logo-large" src={pearLogoUrl} />
-            <span>PearProgramming</span>
-          </div>
-        </nav>
         <div className="landing-hero-grid">
           <div className="landing-copy">
-            <p className="landing-kicker">Real-time coding rooms</p>
-            <h1>Code together in a lightweight browser IDE.</h1>
+            <div className="landing-brand landing-brand-hero">
+              <img alt="" className="brand-logo brand-logo-large" src={pearLogoUrl} />
+              <span>PearProgramming</span>
+            </div>
+            <p className="landing-subheading">Pair Program Together. Real-time Coding Rooms.</p>
+            <h1>Code together in a pear-ly friendly browser IDE in real time</h1>
             <p>
-              PearProgramming gives teams a shared room where they can upload files or folders,
-              edit together in real time, chat alongside the code, and move through a project
-              without leaving the browser.
+              PearProgramming is a real-time collaborative coding platform where teams can write code together, chat alongside their work, and stay in sync in a shared browser IDE. Rooms are limited to 5 pears for smooth collaboration. Meet PearAI—your context-aware coding assistant that understands your file, edits, cursors, and conversations to help you move faster.
+              <br />
+              Get Pearing.
             </p>
-            <a className="hero-cta" href="#room-actions">Get Started</a>
           </div>
           <section className="landing-panel" id="room-actions">
             <div className="room-card-heading">
               <span>Create or Join a Room</span>
-              <small>Start empty, then upload your project.</small>
+              <small>Start empty, then upload your project</small>
             </div>
             <div className="landing-actions">
               <button className="primary-button create-room-button" disabled={creating} onClick={onCreate} type="button">
-                <Upload size={16} />
-                {creating ? 'Creating...' : 'Create Room'}
+                {creating ? 'Creating...' : 'Create Pear Room'}
               </button>
               <form
                 className="join-form"
@@ -1574,8 +1678,7 @@ function LandingPage({
                   value={code}
                 />
                 <button className="secondary-button" disabled={joining} type="submit">
-                  <LogIn size={15} />
-                  {joining ? 'Joining...' : 'Join Room'}
+                  {joining ? 'Joining...' : 'Join Pear Room'}
                 </button>
               </form>
             </div>
@@ -1728,6 +1831,10 @@ function basename(path: string) {
   return parts[parts.length - 1] ?? path;
 }
 
+function displayNameOrPear(name?: string) {
+  return name?.trim() || 'A pear';
+}
+
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -1804,6 +1911,10 @@ function normalizeRoomCode(value: string) {
   return value.trim().toUpperCase();
 }
 
+function isValidRoomCode(value: string) {
+  return /^[A-Z0-9]{6}$/.test(value);
+}
+
 function randomRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -1847,11 +1958,16 @@ function saveStatusText(state: SaveState, lastSavedAt: string | null) {
   return 'Autosave ready';
 }
 
-function uploadNoticeText(result: UploadReadResult) {
+function uploadNoticeText(result: UploadReadResult, renamedCount = 0) {
+  const renameText = renamedCount > 0
+    ? ` Renamed ${renamedCount} duplicate file${renamedCount === 1 ? '' : 's'} to avoid overwriting existing files.`
+    : '';
+
   if (result.skipped.length === 0) {
-    return result.candidates.length === 1
+    const base = result.candidates.length === 1
       ? 'Selected 1 supported file.'
       : `Selected ${result.candidates.length} supported files.`;
+    return `${base}${renameText}`;
   }
 
   const examples = result.skipped
@@ -1865,7 +1981,64 @@ function uploadNoticeText(result: UploadReadResult) {
     return `No supported code files found. ${skippedText}`;
   }
 
-  return `Selected ${result.candidates.length} supported file${result.candidates.length === 1 ? '' : 's'}. ${skippedText}`;
+  return `Selected ${result.candidates.length} supported file${result.candidates.length === 1 ? '' : 's'}. ${skippedText}${renameText}`;
+}
+
+function safeUploadPaths(candidates: UploadCandidate[], existingPaths: string[]) {
+  const usedPaths = new Set(existingPaths);
+  let renamedCount = 0;
+  const safeCandidates = candidates.map((candidate) => {
+    if (!usedPaths.has(candidate.path)) {
+      usedPaths.add(candidate.path);
+      return candidate;
+    }
+
+    renamedCount += 1;
+    const path = uniqueCopyPath(candidate.path, usedPaths);
+    usedPaths.add(path);
+    return { ...candidate, path, language: inferLanguage(path) };
+  });
+
+  return { candidates: safeCandidates, renamedCount };
+}
+
+function uniqueCopyPath(path: string, usedPaths: Set<string>) {
+  const slashIndex = path.lastIndexOf('/');
+  const directory = slashIndex >= 0 ? `${path.slice(0, slashIndex + 1)}` : '';
+  const filename = slashIndex >= 0 ? path.slice(slashIndex + 1) : path;
+  const dotIndex = filename.lastIndexOf('.');
+  const base = dotIndex > 0 ? filename.slice(0, dotIndex) : filename;
+  const extension = dotIndex > 0 ? filename.slice(dotIndex) : '';
+
+  let suffix = 'copy';
+  let candidate = `${directory}${base}-${suffix}${extension}`;
+  let index = 2;
+  while (usedPaths.has(candidate)) {
+    suffix = `copy-${index}`;
+    candidate = `${directory}${base}-${suffix}${extension}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function configureFolderInput(input: HTMLInputElement) {
+  const folderInput = input as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean };
+  folderInput.webkitdirectory = true;
+  folderInput.directory = true;
+  input.setAttribute('webkitdirectory', '');
+  input.setAttribute('directory', '');
+}
+
+function Toast({ message }: { message: string }) {
+  if (!message) {
+    return null;
+  }
+
+  return (
+    <div className="toast" role="status" aria-live="polite">
+      {message}
+    </div>
+  );
 }
 
 function fileToDataUrl(file: File) {

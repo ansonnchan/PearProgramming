@@ -35,26 +35,47 @@ button:disabled {
 }
 
 .landing-shell {
+  position: relative;
   min-height: 100vh;
   padding: 24px;
   overflow: auto;
   background:
-    radial-gradient(circle at top left, rgb(196 209 78 / 34%), transparent 34%),
-    linear-gradient(135deg, #f8f5df 0%, #dff0ca 46%, #f5f0df 100%);
+    radial-gradient(circle at 16% 18%, rgb(216 231 91 / 34%), transparent 28%),
+    radial-gradient(circle at 82% 28%, rgb(133 183 94 / 22%), transparent 32%),
+    linear-gradient(135deg, #fff8df 0%, #dff2c5 48%, #f6ecd6 100%);
+}
+
+.landing-shell::before {
+  position: fixed;
+  inset: -20%;
+  z-index: 0;
+  content: '';
+  background:
+    radial-gradient(circle at 30% 40%, rgb(255 255 255 / 38%), transparent 16%),
+    radial-gradient(circle at 68% 58%, rgb(193 216 89 / 24%), transparent 18%);
+  animation: pear-drift 16s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.landing-shell::after {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  content: '';
+  background-image:
+    linear-gradient(120deg, rgb(255 255 255 / 16%) 0 1px, transparent 1px 76px),
+    linear-gradient(30deg, rgb(61 97 43 / 8%) 0 1px, transparent 1px 92px);
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 70%), transparent 78%);
+  pointer-events: none;
 }
 
 .landing-hero {
+  position: relative;
+  z-index: 1;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   width: min(1120px, 100%);
   min-height: calc(100vh - 48px);
   margin: 0 auto;
-}
-
-.landing-nav {
-  display: flex;
-  align-items: center;
-  height: 54px;
 }
 
 .landing-brand {
@@ -66,65 +87,59 @@ button:disabled {
   font-weight: 800;
 }
 
+.landing-brand-hero {
+  justify-content: center;
+  font-size: 34px;
+  letter-spacing: 0;
+}
+
+.landing-brand-hero .brand-logo-large {
+  width: 62px;
+  height: 62px;
+}
+
 .landing-hero-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(340px, 430px);
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 480px);
   align-items: center;
-  gap: 42px;
+  gap: 46px;
 }
 
 .landing-copy {
-  max-width: 660px;
+  display: grid;
+  justify-items: center;
+  max-width: 680px;
+  text-align: center;
 }
 
-.landing-kicker {
-  width: fit-content;
-  margin: 0 0 14px;
-  padding: 6px 10px;
-  border: 1px solid rgb(74 112 49 / 20%);
-  border-radius: 999px;
-  background: rgb(255 255 255 / 54%);
-  color: #486f2d;
-  font-size: 12px;
+.landing-subheading {
+  margin: 12px 0 18px;
+  color: #42662d;
+  font-size: 18px;
   font-weight: 900;
 }
 
 .landing-copy h1 {
   margin: 0;
   color: #1e2f18;
-  font-size: 64px;
-  line-height: .95;
+  font-size: 58px;
+  line-height: 1.02;
   letter-spacing: 0;
 }
 
-.landing-copy p:not(.landing-kicker) {
-  max-width: 590px;
-  margin: 20px 0 26px;
+.landing-copy p:not(.landing-subheading) {
+  max-width: 660px;
+  margin: 20px 0 0;
   color: #40533a;
-  font-size: 18px;
-  line-height: 1.62;
-}
-
-.hero-cta {
-  display: inline-flex;
-  align-items: center;
-  min-height: 42px;
-  padding: 0 18px;
-  border: 1px solid #567c35;
-  border-radius: 999px;
-  background: #2f6b2c;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 900;
-  text-decoration: none;
-  box-shadow: 0 14px 34px rgb(47 107 44 / 26%);
+  font-size: 17px;
+  line-height: 1.66;
 }
 
 .landing-panel {
   width: 100%;
-  padding: 22px;
+  padding: 30px;
   border: 1px solid rgb(86 124 53 / 20%);
-  border-radius: 18px;
+  border-radius: 20px;
   background: rgb(255 252 245 / 84%);
   color: #24331e;
   box-shadow: 0 24px 70px rgb(72 93 52 / 20%);
@@ -134,12 +149,13 @@ button:disabled {
 .room-card-heading {
   display: grid;
   gap: 5px;
-  margin-bottom: 18px;
+  margin-bottom: 22px;
+  text-align: center;
 }
 
 .room-card-heading span {
   color: #22351c;
-  font-size: 22px;
+  font-size: 25px;
   font-weight: 900;
 }
 
@@ -160,8 +176,8 @@ button:disabled {
 
 .join-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 92px;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 10px;
 }
 
 .join-form input,
@@ -198,6 +214,38 @@ button:disabled {
 .landing-error {
   color: #a53d2f;
   font-size: 12px;
+}
+
+.landing-chibi {
+  position: fixed;
+  right: 18px;
+  bottom: 12px;
+  z-index: 1;
+  width: min(190px, 28vw);
+  max-height: 34vh;
+  object-fit: contain;
+  filter: drop-shadow(0 18px 28px rgb(71 91 45 / 22%));
+  animation: pear-bob 5.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes pear-drift {
+  from {
+    transform: translate3d(-1.5%, -1%, 0) rotate(-1deg);
+  }
+  to {
+    transform: translate3d(1.5%, 1%, 0) rotate(1deg);
+  }
+}
+
+@keyframes pear-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
 }
 
 .app-shell {
@@ -864,6 +912,24 @@ button:disabled {
   color: #3c2f75;
 }
 
+.message-system {
+  display: flex;
+  justify-content: center;
+}
+
+.message-system p {
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid #d5dcca;
+  border-radius: 999px;
+  background: #f8fbe9;
+  color: #59644c;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
 .chat-input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 34px;
@@ -926,6 +992,22 @@ button:disabled {
 
 .encoding {
   margin-left: auto;
+}
+
+.toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 80;
+  max-width: min(360px, calc(100vw - 36px));
+  padding: 12px 14px;
+  border: 1px solid #c8d5af;
+  border-radius: 12px;
+  background: #21351b;
+  color: #fffbe9;
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: 0 18px 46px rgb(36 53 30 / 30%);
 }
 
 .modal-backdrop {
@@ -1032,6 +1114,10 @@ button:disabled {
     font-size: 48px;
   }
 
+  .landing-brand-hero {
+    font-size: 30px;
+  }
+
   .topbar {
     grid-template-columns: 170px minmax(0, 1fr);
     grid-template-rows: 44px 40px;
@@ -1068,8 +1154,22 @@ button:disabled {
     font-size: 40px;
   }
 
-  .landing-copy p:not(.landing-kicker) {
+  .landing-copy p:not(.landing-subheading) {
     font-size: 16px;
+  }
+
+  .landing-brand-hero {
+    font-size: 26px;
+  }
+
+  .landing-brand-hero .brand-logo-large {
+    width: 44px;
+    height: 44px;
+  }
+
+  .landing-chibi {
+    width: 118px;
+    opacity: .75;
   }
 
   .topbar {
@@ -1103,7 +1203,10 @@ button:disabled {
 
   .tab {
     min-width: 112px;
-    padding: 0 10px;
+  }
+
+  .tab-main {
+    padding: 0 7px 0 10px;
   }
 
   .statusbar {

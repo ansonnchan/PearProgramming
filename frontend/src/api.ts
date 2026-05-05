@@ -1,4 +1,4 @@
-import type { AiAnnotation, BootstrapResponse, ChatMessage, GitHubImportResponse, Room, Workspace, WorkspaceFile } from './types';
+import type { AiAnnotation, BootstrapResponse, ChatMessage, GitHubImportResponse, Room, RoomAccess, Workspace, WorkspaceFile } from './types';
 import type { UploadCandidate } from './uploads';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080';
@@ -19,6 +19,10 @@ export async function issueDevToken(userId: string, displayName: string): Promis
 
 export async function getRoom(code: string): Promise<Room> {
   return getJson<Room>(`/api/rooms/${code}`);
+}
+
+export async function getRoomAccess(code: string, userId: string): Promise<RoomAccess> {
+  return getJson<RoomAccess>(`/api/rooms/${code}/access?userId=${encodeURIComponent(userId)}`);
 }
 
 export async function createWorkspace(name: string): Promise<Workspace> {
