@@ -1648,12 +1648,19 @@ function LandingPage({
               <span>PearProgramming</span>
             </div>
             <p className="landing-subheading">Pair Program Together. Real-time Coding Rooms.</p>
-            <h1>Code together in a pear-ly friendly browser IDE in real time</h1>
+            <h1>Code together in a pear-ly friendly browser IDE in real time.</h1>
+          
             <p>
-              PearProgramming is a real-time collaborative coding platform where teams can write code together, chat alongside their work, and stay in sync in a shared browser IDE. Rooms are limited to 5 pears for smooth collaboration. Meet PearAI—your context-aware coding assistant that understands your file, edits, cursors, and conversations to help you move faster.
-              <br />
-              Get Pearing.
+              PearProgramming is a real-time collaborative coding platform where teams can write code together, chat alongside their work, and stay in sync in a shared browser IDE. Rooms are limited to 5 pears for smooth collaboration. 
+              </p>
+                <p>
+            <b>What's makes PearProgramming different? </b> 
             </p>
+              <p> PearProgramming offers <b>PearAI</b>, your context-aware coding assistant that understands your code, project structure, edits, and conversations to help you and your team move faster.
+        </p>
+              <br />
+              <b>Get Pearing.</b>
+ 
           </div>
           <section className="landing-panel" id="room-actions">
             <div className="room-card-heading">
