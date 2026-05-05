@@ -5,11 +5,11 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:pear}
     driver-class-name: org.postgresql.Driver
   flyway:
-    enabled: true
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
 management:
   health:
     redis:
-      enabled: true
+      enabled: ${SPRING_REDIS_HEALTH_ENABLED:false}
