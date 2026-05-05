@@ -3,7 +3,6 @@ package com.pearprogram.rooms;
 import org.springframework.beans.factory.annotation.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -41,7 +40,7 @@ public class EphemeralRoomStateService {
             Boolean exists = redisTemplate.hasKey(key);
             redisAvailable = true;
             return Boolean.TRUE.equals(exists) || fallbackContains(code);
-        } catch (RedisConnectionFailureException ex) {
+        } catch (RuntimeException ex) {
             markRedisDown(ex);
             return fallbackContains(code);
         }
@@ -53,7 +52,7 @@ public class EphemeralRoomStateService {
             redisTemplate.opsForHash().put(roomKey(code), "workspaceId", workspaceId.toString());
             redisTemplate.expire(roomKey(code), ttl);
             redisAvailable = true;
-        } catch (RedisConnectionFailureException ex) {
+        } catch (RuntimeException ex) {
             markRedisDown(ex);
             fallbackRooms.put(code, new FallbackRoom(workspaceId, Instant.now().plus(ttl)));
         }
@@ -63,6 +62,16 @@ public class EphemeralRoomStateService {
         return redisAvailable;
     }
 
+    public int activeMemberCount(String code) {
+        try {
+            redisAvailable = true;
+            return redisMembers(code).size();
+        } catch (RuntimeException ex) {
+            markRedisDown(ex);
+            return fallbackRuntimeState(code).members.size();
+        }
+    }
+
     public RoomAccessDto roomAccess(String code, String userId) {
         try {
             Set<String> members = redisMembers(code);
@@ -70,7 +79,7 @@ public class EphemeralRoomStateService {
             String leadUserId = redisLeadUserId(code);
             redisAvailable = true;
             return accessFrom(code, userId, members, locked, leadUserId);
-        } catch (RedisConnectionFailureException ex) {
+        } catch (RuntimeException ex) {
             markRedisDown(ex);
             FallbackRuntimeState state = fallbackRuntimeState(code);
             return accessFrom(code, userId, new HashSet<>(state.members), state.locked, state.leadUserId);
@@ -95,7 +104,7 @@ public class EphemeralRoomStateService {
             expireRuntimeKeys(code);
             redisAvailable = true;
             return roomAccess(code, userId);
-        } catch (RedisConnectionFailureException ex) {
+        } catch (RuntimeException ex) {
             markRedisDown(ex);
             FallbackRuntimeState state = fallbackRuntimeState(code);
             state.members.add(userId);
@@ -124,7 +133,7 @@ public class EphemeralRoomStateService {
             expireRuntimeKeys(code);
             redisAvailable = true;
             return accessFrom(code, userId, members, redisLocked(code), leadUserId);
-        } catch (RedisConnectionFailureException ex) {
+        } catch (RuntimeException ex) {
             markRedisDown(ex);
             FallbackRuntimeState state = fallbackRuntimeState(code);
             state.members.remove(userId);
@@ -146,7 +155,7 @@ public class EphemeralRoomStateService {
             expireRuntimeKeys(code);
             redisAvailable = true;
             return roomAccess(code, leadUserId);
-        } catch (RedisConnectionFailureException ex) {
+        } catch (RuntimeException ex) {
             markRedisDown(ex);
             FallbackRuntimeState state = fallbackRuntimeState(code);
             state.leadUserId = leadUserId;
@@ -168,7 +177,7 @@ public class EphemeralRoomStateService {
             expireRuntimeKeys(code);
             redisAvailable = true;
             return roomAccess(code, userId);
-        } catch (RedisConnectionFailureException ex) {
+        } catch (RuntimeException ex) {
             markRedisDown(ex);
             FallbackRuntimeState state = fallbackRuntimeState(code);
             if (!isBlank(state.leadUserId) && !state.leadUserId.equals(userId)) {
@@ -188,7 +197,7 @@ public class EphemeralRoomStateService {
             redisTemplate.delete(roomMembersKey(code));
             redisTemplate.opsForHash().delete(roomKey(code), "locked", "leadUserId");
             redisAvailable = true;
-        } catch (RedisConnectionFailureException ex) {
+        } catch (RuntimeException ex) {
             markRedisDown(ex);
             fallbackRuntimeStates.remove(code);
         }

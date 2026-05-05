@@ -9,6 +9,7 @@ import com.pearprogram.rooms.EphemeralRoomStateService;
 import com.pearprogram.rooms.Room;
 import com.pearprogram.rooms.RoomAccessDto;
 import com.pearprogram.rooms.RoomRepository;
+import com.pearprogram.rooms.RoomService;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -27,6 +28,7 @@ import java.util.UUID;
 public class RoomEventController {
     private final SimpMessagingTemplate messagingTemplate;
     private final RoomRepository roomRepository;
+    private final RoomService roomService;
     private final EphemeralRoomStateService roomStateService;
     private final ChatMessageRepository chatMessageRepository;
     private final AiParticipantService aiParticipantService;
@@ -36,6 +38,7 @@ public class RoomEventController {
     public RoomEventController(
             SimpMessagingTemplate messagingTemplate,
             RoomRepository roomRepository,
+            RoomService roomService,
             EphemeralRoomStateService roomStateService,
             ChatMessageRepository chatMessageRepository,
             AiParticipantService aiParticipantService,
@@ -44,6 +47,7 @@ public class RoomEventController {
     ) {
         this.messagingTemplate = messagingTemplate;
         this.roomRepository = roomRepository;
+        this.roomService = roomService;
         this.roomStateService = roomStateService;
         this.chatMessageRepository = chatMessageRepository;
         this.aiParticipantService = aiParticipantService;
@@ -98,8 +102,13 @@ public class RoomEventController {
         MemberEvent outbound = event;
         if ("joined".equals(event.type())) {
             outbound = withRoomState(event, roomStateService.joinRoom(code, event.userId()));
+            roomService.cancelCleanup(code);
         } else if ("left".equals(event.type())) {
-            outbound = withRoomState(event, roomStateService.leaveRoom(code, event.userId()));
+            RoomAccessDto state = roomStateService.leaveRoom(code, event.userId());
+            outbound = withRoomState(event, state);
+            if (state.memberCount() == 0) {
+                roomService.scheduleCleanupIfEmpty(code);
+            }
         } else if ("lead-transferred".equals(event.type())) {
             String nextLead = event.leadUserId() == null || event.leadUserId().isBlank()
                     ? event.targetUserId()
@@ -108,7 +117,7 @@ public class RoomEventController {
         } else if ("lock-changed".equals(event.type()) && event.locked() != null) {
             outbound = withRoomState(event, roomStateService.setLocked(code, event.userId(), event.locked()));
         } else if ("room-closed".equals(event.type())) {
-            roomStateService.clearRuntimeState(code);
+            roomService.closeRoom(code);
         } else {
             outbound = withRoomState(event, roomStateService.roomAccess(code, event.userId()));
         }

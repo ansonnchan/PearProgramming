@@ -20,11 +20,10 @@ public class RoomCodeGenerator {
     }
 
     private String generate(char[] alphabet) {
-        return new StringBuilder(7)
+        return new StringBuilder(6)
                 .append(randomChar(alphabet))
                 .append(randomChar(alphabet))
                 .append(randomChar(alphabet))
-                .append('-')
                 .append(randomChar(alphabet))
                 .append(randomChar(alphabet))
                 .append(randomChar(alphabet))

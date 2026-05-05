@@ -1,49 +1,97 @@
 const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
 const { URL } = require('node:url');
 const { WebSocketServer } = require('ws');
 const Y = require('yjs');
 const Redis = require('ioredis');
-const { setupWSConnection, docs } = require('y-websocket/bin/utils');
+const { setupWSConnection, docs, getYDoc } = require('y-websocket/bin/utils');
 
-const PORT = Number(process.env.PORT || 1235);
+const loadedEnvFiles = loadEnvFiles();
+const PORT = numberFromEnv('PORT', 1235);
 const SPRING_AUTH_URL = process.env.SPRING_AUTH_URL || 'http://localhost:8081/auth/validate';
 const SNAPSHOT_ENDPOINT = process.env.SNAPSHOT_ENDPOINT || 'http://localhost:8081/internal/files';
+const ROOM_CLEANUP_ENDPOINT = process.env.ROOM_CLEANUP_ENDPOINT || deriveRoomCleanupEndpoint(SNAPSHOT_ENDPOINT);
 const ALLOW_ANONYMOUS = (process.env.ALLOW_ANONYMOUS || 'true').toLowerCase() === 'true';
-const SNAPSHOT_INTERVAL_MS = Number(process.env.SNAPSHOT_INTERVAL_MS || 30_000);
-const ROOM_TTL_SECONDS = Number(process.env.ROOM_TTL_SECONDS || 24 * 60 * 60);
-const REDIS_OPTIONS = redisOptionsFromEnv();
+const SNAPSHOT_INTERVAL_MS = numberFromEnv('SNAPSHOT_INTERVAL_MS', 30_000);
+const ROOM_TTL_SECONDS = numberFromEnv('ROOM_TTL_SECONDS', 24 * 60 * 60);
+const ROOM_CLEANUP_GRACE_MS = numberFromEnv('ROOM_CLEANUP_GRACE_MS', 20_000);
+const REDIS_CONFIG = redisConfigFromEnv();
 
 const hydratedDocs = new Set();
 const persistenceAttached = new Set();
 const lastFlushMs = new Map();
+const roomSockets = new Map();
+const roomCleanupTimers = new Map();
 let redisAvailable = false;
+let redis = null;
 
-const redis = new Redis({
-  ...REDIS_OPTIONS,
-  lazyConnect: true,
-  maxRetriesPerRequest: 1,
-  enableReadyCheck: true
+log('info', 'Realtime configuration loaded', {
+  envFiles: loadedEnvFiles,
+  authUrl: sanitizeUrl(SPRING_AUTH_URL),
+  snapshotEndpoint: sanitizeUrl(SNAPSHOT_ENDPOINT),
+  roomCleanupEndpoint: sanitizeUrl(ROOM_CLEANUP_ENDPOINT),
+  cleanupGraceMs: ROOM_CLEANUP_GRACE_MS
 });
 
-redis.on('ready', () => {
-  redisAvailable = true;
-  logMetric('redis_available', 1);
-});
+if (REDIS_CONFIG.enabled) {
+  redis = new Redis({
+    ...REDIS_CONFIG.options,
+    lazyConnect: true,
+    maxRetriesPerRequest: 1,
+    enableReadyCheck: true
+  });
 
-redis.on('error', (error) => {
-  if (redisAvailable) {
-    log('warn', 'Redis unavailable for Yjs persistence; continuing with in-memory docs', { error: error.message });
-  }
-  redisAvailable = false;
-});
+  log('info', 'Redis configured for Yjs persistence', {
+    mode: REDIS_CONFIG.mode,
+    host: REDIS_CONFIG.host,
+    port: REDIS_CONFIG.port,
+    tls: REDIS_CONFIG.tls
+  });
 
-redis.connect().catch((error) => {
-  log('warn', 'Redis connection failed on startup; continuing with in-memory docs', { error: error.message });
-});
+  redis.on('ready', () => {
+    redisAvailable = true;
+    log('info', 'Redis connected for Yjs persistence', {
+      mode: REDIS_CONFIG.mode,
+      host: REDIS_CONFIG.host,
+      port: REDIS_CONFIG.port,
+      tls: REDIS_CONFIG.tls
+    });
+    logMetric('redis_available', 1);
+  });
+
+  redis.on('error', (error) => {
+    if (redisAvailable) {
+      log('warn', 'Redis unavailable for Yjs persistence; continuing with in-memory docs', { error: error.message });
+    }
+    redisAvailable = false;
+  });
+
+  redis.connect().catch((error) => {
+    redisAvailable = false;
+    log('warn', 'Redis connection failed on startup; continuing with in-memory docs', {
+      mode: REDIS_CONFIG.mode,
+      host: REDIS_CONFIG.host,
+      port: REDIS_CONFIG.port,
+      error: error.message
+    });
+  });
+} else {
+  log('warn', 'Redis is not configured; using in-memory Yjs docs only', {
+    reason: REDIS_CONFIG.reason,
+    expected: 'Set REDIS_URL to an Upstash TCP URL such as rediss://default:<token>@<host>:6379'
+  });
+}
 
 const server = http.createServer(async (req, res) => {
   if (req.url === '/health') {
-    json(res, 200, { status: 'ok', redisAvailable, activeDocs: docs.size });
+    json(res, 200, {
+      status: 'ok',
+      redisAvailable,
+      redisMode: REDIS_CONFIG.mode,
+      activeDocs: docs.size,
+      activeRooms: roomSockets.size
+    });
     return;
   }
 
@@ -85,19 +133,15 @@ server.on('upgrade', async (req, socket, head) => {
 
 wss.on('connection', async (ws, req) => {
   const { pearDocName: docName, pearRoomCode: roomCode, pearFileId: fileId } = req;
-  setupWSConnection(ws, req, { docName });
-
-  const doc = docs.get(docName);
-  if (!doc) {
-    log('warn', 'y-websocket did not create a doc for connection', { docName });
-    return;
-  }
+  const doc = getYDoc(docName);
 
   if (!hydratedDocs.has(docName)) {
     hydratedDocs.add(docName);
     await hydrateDoc(doc, roomCode, fileId);
   }
 
+  setupWSConnection(ws, req, { docName });
+  trackRoomConnection(roomCode, ws);
   attachRedisPersistence(doc, roomCode, fileId);
   log('info', 'Yjs client connected', { room: roomCode, fileId, activeDocs: docs.size });
 });
@@ -189,7 +233,7 @@ async function hydratePostgresSnapshot(doc, roomCode, fileId) {
 }
 
 async function hydrateRedisUpdates(doc, roomCode, fileId) {
-  if (!redisAvailable) {
+  if (!redis || !redisAvailable) {
     return;
   }
 
@@ -215,7 +259,7 @@ function attachRedisPersistence(doc, roomCode, fileId) {
   persistenceAttached.add(docName);
   doc.on('update', async (update) => {
     logMetric('yjs_sync_delay_ms', 0, roomCode);
-    if (!redisAvailable) {
+    if (!redis || !redisAvailable) {
       return;
     }
 
@@ -231,29 +275,145 @@ function attachRedisPersistence(doc, roomCode, fileId) {
 
 async function flushSnapshots() {
   for (const [docName, doc] of docs.entries()) {
-    const [roomCode, fileId] = docName.split(':');
-    const started = performance.now();
-    const encodedState = Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64');
-    const plainText = doc.getText('monaco').toString();
+    await flushSnapshot(docName, doc);
+  }
+}
 
-    try {
-      const response = await fetch(`${SNAPSHOT_ENDPOINT}/${fileId}/snapshot`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ roomCode, encodedState, plainText }),
-        signal: AbortSignal.timeout(5000)
-      });
-
-      const durationMs = Math.round(performance.now() - started);
-      lastFlushMs.set(docName, durationMs);
-      logMetric('snapshot_flush_ms', durationMs, roomCode);
-
-      if (!response.ok) {
-        log('warn', 'Snapshot flush returned non-OK status', { room: roomCode, fileId, status: response.status });
-      }
-    } catch (error) {
-      log('warn', 'Snapshot flush failed', { room: roomCode, fileId, error: error.message });
+async function flushRoomSnapshots(roomCode) {
+  const prefix = `${roomCode}:`;
+  for (const [docName, doc] of docs.entries()) {
+    if (docName.startsWith(prefix)) {
+      await flushSnapshot(docName, doc);
     }
+  }
+}
+
+async function flushSnapshot(docName, doc) {
+  const [roomCode, fileId] = docName.split(':');
+  const started = performance.now();
+  const encodedState = Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64');
+  const plainText = doc.getText('monaco').toString();
+
+  try {
+    const response = await fetch(`${SNAPSHOT_ENDPOINT}/${fileId}/snapshot`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ roomCode, encodedState, plainText }),
+      signal: AbortSignal.timeout(5000)
+    });
+
+    const durationMs = Math.round(performance.now() - started);
+    lastFlushMs.set(docName, durationMs);
+    logMetric('snapshot_flush_ms', durationMs, roomCode);
+
+    if (!response.ok) {
+      log('warn', 'Snapshot flush returned non-OK status', { room: roomCode, fileId, status: response.status });
+    }
+  } catch (error) {
+    log('warn', 'Snapshot flush failed', { room: roomCode, fileId, error: error.message });
+  }
+}
+
+function trackRoomConnection(roomCode, ws) {
+  cancelRoomCleanup(roomCode);
+
+  let sockets = roomSockets.get(roomCode);
+  if (!sockets) {
+    sockets = new Set();
+    roomSockets.set(roomCode, sockets);
+  }
+  sockets.add(ws);
+
+  ws.on('close', () => {
+    const current = roomSockets.get(roomCode);
+    if (!current) {
+      return;
+    }
+
+    current.delete(ws);
+    if (current.size > 0) {
+      return;
+    }
+
+    roomSockets.delete(roomCode);
+    scheduleRoomCleanup(roomCode);
+  });
+}
+
+function scheduleRoomCleanup(roomCode) {
+  cancelRoomCleanup(roomCode);
+
+  const timer = setTimeout(() => {
+    roomCleanupTimers.delete(roomCode);
+    cleanupInactiveRoom(roomCode).catch((error) => {
+      log('warn', 'Room cleanup failed', { room: roomCode, error: error.message });
+    });
+  }, ROOM_CLEANUP_GRACE_MS);
+
+  timer.unref?.();
+  roomCleanupTimers.set(roomCode, timer);
+  log('info', 'Scheduled Yjs room cleanup', { room: roomCode, graceMs: ROOM_CLEANUP_GRACE_MS });
+}
+
+function cancelRoomCleanup(roomCode) {
+  const timer = roomCleanupTimers.get(roomCode);
+  if (!timer) {
+    return;
+  }
+
+  clearTimeout(timer);
+  roomCleanupTimers.delete(roomCode);
+  log('info', 'Cancelled pending Yjs room cleanup', { room: roomCode });
+}
+
+async function cleanupInactiveRoom(roomCode) {
+  if (roomSockets.has(roomCode)) {
+    log('info', 'Skipped Yjs room cleanup because users reconnected', { room: roomCode });
+    return;
+  }
+
+  await flushRoomSnapshots(roomCode);
+  const removedDocs = cleanupInMemoryRoomDocs(roomCode);
+  await notifyBackendRoomCleanup(roomCode);
+  log('info', 'Cleaned up inactive Yjs room state', { room: roomCode, removedDocs });
+}
+
+function cleanupInMemoryRoomDocs(roomCode) {
+  const prefix = `${roomCode}:`;
+  let removed = 0;
+
+  for (const [docName, doc] of docs.entries()) {
+    if (!docName.startsWith(prefix)) {
+      continue;
+    }
+
+    doc.destroy();
+    docs.delete(docName);
+    hydratedDocs.delete(docName);
+    persistenceAttached.delete(docName);
+    lastFlushMs.delete(docName);
+    removed += 1;
+  }
+
+  return removed;
+}
+
+async function notifyBackendRoomCleanup(roomCode) {
+  if (!ROOM_CLEANUP_ENDPOINT) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${ROOM_CLEANUP_ENDPOINT}/${encodeURIComponent(roomCode)}/cleanup`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (!response.ok) {
+      log('warn', 'Backend room cleanup returned non-OK status', { room: roomCode, status: response.status });
+    }
+  } catch (error) {
+    log('warn', 'Backend room cleanup request failed', { room: roomCode, error: error.message });
   }
 }
 
@@ -261,25 +421,126 @@ function redisKey(roomCode, fileId) {
   return `yjs:${roomCode}:${fileId}:updates`;
 }
 
-function redisOptionsFromEnv() {
+function redisConfigFromEnv() {
   if (process.env.REDIS_URL) {
-    const parsed = new URL(process.env.REDIS_URL);
+    try {
+      const parsed = new URL(process.env.REDIS_URL);
+      return {
+        enabled: true,
+        mode: 'tcp-url',
+        host: parsed.hostname,
+        port: Number(parsed.port || 6379),
+        tls: parsed.protocol === 'rediss:',
+        options: {
+          host: parsed.hostname,
+          port: Number(parsed.port || 6379),
+          username: parsed.username ? decodeURIComponent(parsed.username) : undefined,
+          password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
+          tls: parsed.protocol === 'rediss:' ? {} : undefined
+        }
+      };
+    } catch {
+      return {
+        enabled: false,
+        mode: 'invalid-tcp-url',
+        reason: 'REDIS_URL is set but is not a valid Redis TCP URL.'
+      };
+    }
+  }
+
+  const restConfigured = process.env.UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_REST_TOKEN;
+  const tcpConfigured = process.env.REDIS_HOST || process.env.REDIS_PASSWORD || process.env.REDIS_PORT || process.env.REDIS_TLS;
+  if (!tcpConfigured) {
     return {
-      host: parsed.hostname,
-      port: Number(parsed.port || 6379),
-      username: parsed.username ? decodeURIComponent(parsed.username) : undefined,
-      password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
-      tls: parsed.protocol === 'rediss:' ? {} : undefined
+      enabled: false,
+      mode: restConfigured ? 'unsupported-upstash-rest' : 'memory',
+      reason: restConfigured
+        ? 'UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN is set, but this service uses ioredis and requires REDIS_URL.'
+        : 'No Redis TCP environment variables were provided.'
     };
   }
 
   const useTls = (process.env.REDIS_TLS || 'false').toLowerCase() === 'true';
+  const host = process.env.REDIS_HOST || 'localhost';
+  const port = Number(process.env.REDIS_PORT || 6379);
   return {
-    host: process.env.REDIS_HOST || 'localhost',
-    port: Number(process.env.REDIS_PORT || 6379),
-    password: process.env.REDIS_PASSWORD || undefined,
-    tls: useTls ? {} : undefined
+    enabled: true,
+    mode: 'tcp-host',
+    host,
+    port,
+    tls: useTls,
+    options: {
+      host,
+      port,
+      password: process.env.REDIS_PASSWORD || undefined,
+      tls: useTls ? {} : undefined
+    }
   };
+}
+
+function loadEnvFiles() {
+  const candidates = [
+    path.resolve(__dirname, '..', '.env'),
+    path.resolve(__dirname, '..', '.env.local')
+  ];
+  const loaded = [];
+
+  for (const filePath of candidates) {
+    if (!fs.existsSync(filePath)) {
+      continue;
+    }
+
+    const fileName = path.basename(filePath);
+    loaded.push(fileName);
+    const content = fs.readFileSync(filePath, 'utf8');
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) {
+        continue;
+      }
+
+      const assignment = line.startsWith('export ') ? line.slice('export '.length) : line;
+      const equalsIndex = assignment.indexOf('=');
+      if (equalsIndex === -1) {
+        continue;
+      }
+
+      const key = assignment.slice(0, equalsIndex).trim();
+      let value = assignment.slice(equalsIndex + 1).trim();
+      if (!key || process.env[key] !== undefined) {
+        continue;
+      }
+
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      process.env[key] = value;
+    }
+  }
+
+  return loaded;
+}
+
+function deriveRoomCleanupEndpoint(snapshotEndpoint) {
+  return snapshotEndpoint.replace(/\/internal\/files\/?$/, '/internal/rooms');
+}
+
+function numberFromEnv(name, fallback) {
+  const parsed = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function sanitizeUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) {
+      url.username = url.username ? '<redacted>' : '';
+      url.password = url.password ? '<redacted>' : '';
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
 }
 
 function looksLikeBase64(value) {
