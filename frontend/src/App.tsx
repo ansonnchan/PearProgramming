@@ -1789,21 +1789,23 @@ function LandingPage({
           <div className="landing-copy">
             <div className="landing-brand landing-brand-hero">
               <img alt="" className="brand-logo brand-logo-large" src={pearLogoUrl} />
-              <span>PearProgramming</span>
+              <h1>Pear Programming</h1>
             </div>
             <p className="landing-subheading">Pair Program Together. Real-time Coding Rooms.</p>
             <h1>Code with others in a <strong>pear-ly</strong> friendly browser IDE in real time.</h1>
             <p>
-              PearProgramming is a collaborative coding platform where teams can write code together in real time, chat alongside their work, and stay in sync in a shared browser IDE. Rooms are limited to 5 pears for smooth collaboration.
+              Pear Programming is a collaborative coding platform where teams can write code together in real time, chat alongside their work, and stay in sync in a shared browser IDE. Rooms are limited to 5 pears for smooth collaboration.
       <br/>
       <br/>
-      <b> What makes PearProgramming special?</b>
+      <b> What makes Pear Programming special?</b>
       <br/>
       <br/>
-        Meet PearAI—your context-aware coding assistant that understands your file, edits, cursors, and conversations to help you move faster.
+        Meet <b>PearAI</b>—your context-aware coding assistant that understands your file, edits, cursors, and conversations to help you move faster.
         PearAI will live in your room, ready to assist whenever you need it. Just mention @AI in chat to get started.
+
               <br />
-              <strong>Get Pearing.</strong>
+              <br></br>
+              Now, go <strong>get pearing.</strong> with your team.
             </p>
  
           </div>

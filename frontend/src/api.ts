@@ -1,9 +1,9 @@
 import type { AiAnnotation, BootstrapResponse, ChatMessage, GitHubImportResponse, Room, RoomAccess, Workspace, WorkspaceFile } from './types';
 import type { UploadCandidate } from './uploads';
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080';
-export const STOMP_URL = import.meta.env.VITE_STOMP_URL ?? 'http://localhost:8080/ws';
-export const YJS_URL = import.meta.env.VITE_YJS_URL ?? 'ws://localhost:1234';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8081';
+export const STOMP_URL = import.meta.env.VITE_STOMP_URL ?? 'http://localhost:8081/ws';
+export const YJS_URL = import.meta.env.VITE_YJS_URL ?? 'ws://localhost:1235';
 
 export async function bootstrapDemoRoom(): Promise<BootstrapResponse> {
   return postJson<BootstrapResponse>('/api/bootstrap', {});
