@@ -12,7 +12,6 @@ import {
   ImagePlus,
   MessageSquare,
   Send,
-  Upload,
   UserRound,
   Wifi,
   WifiOff,
@@ -43,7 +42,7 @@ import { inferLanguage, languageClass } from './language';
 import pearLogoUrl from '../assets/favicon.png';
 import pearChibiUrl from '../assets/pear_chibi.jpg';
 import type { UploadCandidate, UploadReadResult } from './uploads';
-import { projectNameForPaths, readUploadCandidates, UPLOAD_ACCEPT } from './uploads';
+import { projectNameForPaths, readUploadCandidates } from './uploads';
 import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, WorkspaceFile } from './types';
 
 const USER_COLORS = ['#378ADD', '#1D9E75', '#F59E0B', '#D946EF', '#EF4444'];
@@ -175,7 +174,6 @@ export default function App() {
   const stompRef = useRef<Client | null>(null);
   const leadUserIdRef = useRef<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const entryAvatarInputRef = useRef<HTMLInputElement | null>(null);
@@ -712,29 +710,24 @@ export default function App() {
           <div className="pane-title-row">
             <span className="pane-title">Explorer</span>
             <div className="icon-row">
-              <button className="icon-button panel-minimize-button" onClick={() => setExplorerOpen(false)} type="button" title="Minimize explorer">
-                -
-              </button>
               <button className="icon-button" onClick={handleNewFile} type="button" title="New file">
                 <FilePlus2 size={15} />
               </button>
               <button className="icon-button" onClick={handleNewFolder} type="button" title="New folder">
                 <FolderPlus size={15} />
               </button>
+              <button className="icon-button panel-minimize-button" onClick={() => setExplorerOpen(false)} type="button" title="Minimize explorer">
+                -
+              </button>
             </div>
           </div>
           <div className="upload-actions">
-            <button className="upload-button" onClick={() => fileInputRef.current?.click()} type="button">
-              <Upload size={14} />
-              <span>Upload File</span>
-            </button>
             <button className="upload-button" onClick={openFolderPicker} type="button">
               <FolderPlus size={14} />
               <span>Upload Folder</span>
             </button>
           </div>
-          <input accept={UPLOAD_ACCEPT} className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, false)} ref={fileInputRef} type="file" />
-          <input accept={UPLOAD_ACCEPT} className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, true)} ref={folderInputRef} type="file" />
+          <input className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget)} ref={folderInputRef} type="file" />
           {uploadNotice && (
             <div className="upload-notice" role="status">
               <p>{uploadNotice}</p>
@@ -801,18 +794,13 @@ export default function App() {
             ) : (
               <div className="empty-editor">
                 <div className="empty-editor-content">
-                  {/* TODO: Replace this placeholder with an AI-generated pear dancing animation once the final mp4 asset is ready. */}
-                  <video aria-hidden="true" autoPlay className="empty-pear-video" loop muted playsInline src="/assets/pear-dance.mp4" />
-                  <h1>Start with your files</h1>
-                  <p>Create a file, upload files, or upload a folder to begin editing in this room.</p>
+                  <img alt="" className="empty-pear-idle" src={pearLogoUrl} />
+                  <h1>Upload a project folder to start coding together.</h1>
+                  <p>Your shared file tree will appear here once the folder import finishes.</p>
                   <div className="empty-editor-actions">
-                    <button onClick={() => fileInputRef.current?.click()} type="button">
-                      <Upload size={16} />
-                      Upload File
-                    </button>
                     <button onClick={openFolderPicker} type="button">
                       <FolderPlus size={16} />
-                      Upload Folder
+                      Upload Project Folder
                     </button>
                   </div>
                 </div>
@@ -1158,6 +1146,7 @@ export default function App() {
       return;
     }
 
+    input.value = '';
     configureFolderInput(input);
     input.click();
   }
@@ -1333,24 +1322,31 @@ export default function App() {
     }
   }
 
-  async function handleUploadInput(input: HTMLInputElement, folderUpload: boolean) {
+  async function handleUploadInput(input: HTMLInputElement) {
     if (!input.files || input.files.length === 0) {
+      return;
+    }
+
+    const selectedFiles = Array.from(input.files);
+    const hasFolderPaths = selectedFiles.some((file) => Boolean((file as File & { webkitRelativePath?: string }).webkitRelativePath));
+    if (!hasFolderPaths) {
+      input.value = '';
+      setUploadNotice('Please choose a folder from the folder picker so PearProgramming can preserve the project structure.');
+      setSaveState('error');
       return;
     }
 
     const uploadResult = await readUploadCandidates(input.files);
     input.value = '';
-    const { candidates, renamedCount } = folderUpload
-      ? { candidates: uploadResult.candidates, renamedCount: 0 }
-      : safeUploadPaths(uploadResult.candidates, files.map((file) => file.path));
-    setUploadNotice(uploadNoticeText(uploadResult, renamedCount));
+    const candidates = uploadResult.candidates;
+    setUploadNotice(uploadNoticeText(uploadResult));
     if (candidates.length === 0) {
       setSaveState('error');
       return;
     }
 
     const newFolder = projectNameForPaths(candidates.map((file) => file.path));
-    const isSwitch = files.length > 0 && folderUpload;
+    const isSwitch = files.length > 0;
     const requiredUserIds = humanMembers.map((member) => member.id);
 
     if (isSwitch && requiredUserIds.length > 1 && stompRef.current?.connected) {
@@ -1374,7 +1370,7 @@ export default function App() {
       return;
     }
 
-    void persistUploadCandidates(candidates, isSwitch, !folderUpload);
+    void persistUploadCandidates(candidates, isSwitch, false);
   }
 
   async function persistUploadCandidates(candidates: UploadCandidate[], replaceExisting: boolean, openUploaded = true) {
@@ -1885,7 +1881,7 @@ function EntryProfileModal({
           </span>
           <button className="secondary-button" onClick={() => avatarInputRef.current?.click()} type="button">
             <ImagePlus size={15} />
-            Upload photo
+            Upload Photo
           </button>
           <input accept=".jpg,.jpeg,.png,.webp" className="hidden-file-input" onChange={(event) => onAvatarInput(event.currentTarget)} ref={avatarInputRef} type="file" />
         </div>
@@ -2196,49 +2192,15 @@ function uploadNoticeText(result: UploadReadResult, renamedCount = 0) {
   return `Selected ${result.candidates.length} supported file${result.candidates.length === 1 ? '' : 's'}. ${skippedText}${renameText}`;
 }
 
-function safeUploadPaths(candidates: UploadCandidate[], existingPaths: string[]) {
-  const usedPaths = new Set(existingPaths);
-  let renamedCount = 0;
-  const safeCandidates = candidates.map((candidate) => {
-    if (!usedPaths.has(candidate.path)) {
-      usedPaths.add(candidate.path);
-      return candidate;
-    }
-
-    renamedCount += 1;
-    const path = uniqueCopyPath(candidate.path, usedPaths);
-    usedPaths.add(path);
-    return { ...candidate, path, language: inferLanguage(path) };
-  });
-
-  return { candidates: safeCandidates, renamedCount };
-}
-
-function uniqueCopyPath(path: string, usedPaths: Set<string>) {
-  const slashIndex = path.lastIndexOf('/');
-  const directory = slashIndex >= 0 ? `${path.slice(0, slashIndex + 1)}` : '';
-  const filename = slashIndex >= 0 ? path.slice(slashIndex + 1) : path;
-  const dotIndex = filename.lastIndexOf('.');
-  const base = dotIndex > 0 ? filename.slice(0, dotIndex) : filename;
-  const extension = dotIndex > 0 ? filename.slice(dotIndex) : '';
-
-  let suffix = 'copy';
-  let candidate = `${directory}${base}-${suffix}${extension}`;
-  let index = 2;
-  while (usedPaths.has(candidate)) {
-    suffix = `copy-${index}`;
-    candidate = `${directory}${base}-${suffix}${extension}`;
-    index += 1;
-  }
-  return candidate;
-}
-
 function configureFolderInput(input: HTMLInputElement) {
   const folderInput = input as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean };
   folderInput.webkitdirectory = true;
   folderInput.directory = true;
   input.setAttribute('webkitdirectory', '');
   input.setAttribute('directory', '');
+  input.setAttribute('mozdirectory', '');
+  input.setAttribute('msdirectory', '');
+  input.setAttribute('odirectory', '');
 }
 
 function Toast({ message }: { message: string }) {

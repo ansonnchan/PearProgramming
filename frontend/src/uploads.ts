@@ -17,37 +17,120 @@ export type UploadReadResult = {
   totalFiles: number;
 };
 
-const MAX_UPLOAD_FILES = 300;
-const MAX_UPLOAD_BYTES = 1024 * 1024;
+const MAX_UPLOAD_FILES = 1500;
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set([
+  'adoc',
+  'astro',
+  'bash',
+  'bat',
   'c',
   'cc',
+  'cjs',
+  'cmd',
+  'conf',
+  'config',
   'cpp',
+  'cs',
+  'csv',
   'css',
   'cxx',
+  'dart',
+  'env',
+  'gif',
+  'go',
   'h',
   'hh',
   'hpp',
   'htm',
   'html',
   'hxx',
+  'ico',
+  'ini',
   'java',
+  'jpeg',
+  'jpg',
   'js',
   'json',
+  'jsonc',
   'jsx',
+  'kt',
+  'kts',
+  'less',
+  'lua',
+  'm',
+  'mjs',
+  'mm',
   'md',
   'markdown',
+  'mdx',
+  'php',
+  'png',
+  'properties',
+  'ps1',
   'py',
+  'r',
+  'rb',
+  'rs',
+  'rst',
+  'sass',
+  'scala',
+  'scss',
+  'sh',
   'sql',
+  'svg',
+  'svelte',
+  'swift',
+  'toml',
   'ts',
+  'tsv',
   'tsx',
   'txt',
+  'vue',
+  'webp',
   'xml',
   'yaml',
   'yml'
 ]);
-const ALLOWED_FILENAMES = new Set(['.env.example']);
-const BLOCKED_PATH_SEGMENTS = new Set(['.git', '.hg', '.svn', 'node_modules', 'dist', 'build', 'target', '.idea']);
+const ALLOWED_FILENAMES = new Set([
+  '.dockerignore',
+  '.env',
+  '.env.example',
+  '.gitignore',
+  'bun.lockb',
+  'dockerfile',
+  'docker-compose.yaml',
+  'docker-compose.yml',
+  'makefile',
+  'package-lock.json',
+  'package.json',
+  'pnpm-lock.yaml',
+  'readme',
+  'readme.md',
+  'tsconfig.json',
+  'vite.config.js',
+  'vite.config.ts',
+  'next.config.js',
+  'next.config.ts',
+  'yarn.lock'
+]);
+const BLOCKED_PATH_SEGMENTS = new Set([
+  '.cache',
+  '.git',
+  '.hg',
+  '.next',
+  '.svn',
+  '.turbo',
+  'bower_components',
+  'build',
+  'coverage',
+  'dist',
+  'jspm_packages',
+  'node_modules',
+  'out',
+  'target',
+  '__pycache__'
+]);
 const BLOCKED_FILENAMES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini']);
 export const UPLOAD_ACCEPT = [
   ...Array.from(ALLOWED_EXTENSIONS, (extension) => `.${extension}`),
@@ -62,23 +145,26 @@ const BLOCKED_EXTENSIONS = new Set([
   'dll',
   'dmg',
   'exe',
-  'gif',
   'gz',
-  'ico',
+  'iso',
   'jar',
-  'jpeg',
-  'jpg',
+  'msi',
+  'o',
+  'obj',
+  'pkg',
+  'pyc',
+  'pyo',
   'mov',
   'mp3',
   'mp4',
   'pdf',
-  'png',
   'rar',
+  'so',
   'tar',
   'wasm',
-  'webp',
   'zip'
 ]);
+const IMAGE_EXTENSIONS = new Set(['gif', 'ico', 'jpeg', 'jpg', 'png', 'svg', 'webp']);
 
 export async function readUploadCandidates(fileList: FileList): Promise<UploadReadResult> {
   const files = Array.from(fileList);
@@ -102,10 +188,11 @@ export async function readUploadCandidates(fileList: FileList): Promise<UploadRe
   }
 
   const candidates = await Promise.all(accepted.map(async ({ file, path }) => {
+    const extension = extensionForPath(path);
     return {
       path,
       language: inferLanguage(path),
-      content: await file.text()
+      content: await readCandidateContent(file, extension)
     };
   }));
 
@@ -141,7 +228,7 @@ function blockedReasonFor(file: File, path: string) {
 
   const parts = path.toLowerCase().split('/').filter(Boolean);
   const name = parts[parts.length - 1] ?? '';
-  const extension = name.includes('.') ? name.split('.').pop() ?? '' : '';
+  const extension = extensionForPath(name);
 
   if (parts.some((part) => BLOCKED_PATH_SEGMENTS.has(part) || part.endsWith('.app'))) {
     return 'Project build, dependency, source-control, and app bundle folders are skipped.';
@@ -152,7 +239,7 @@ function blockedReasonFor(file: File, path: string) {
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
-    return 'Files must be 1 MB or smaller.';
+    return 'Files must be 5 MB or smaller.';
   }
 
   if (BLOCKED_EXTENSIONS.has(extension)) {
@@ -163,7 +250,31 @@ function blockedReasonFor(file: File, path: string) {
     return null;
   }
 
-  return 'Only supported code and text project files can be uploaded.';
+  return 'Only supported project files can be uploaded.';
+}
+
+function extensionForPath(path: string) {
+  const name = path.split('/').pop()?.toLowerCase() ?? path.toLowerCase();
+  if (name.startsWith('.') && name.indexOf('.', 1) < 0) {
+    return name.slice(1);
+  }
+  return name.includes('.') ? name.split('.').pop() ?? '' : '';
+}
+
+function readCandidateContent(file: File, extension: string) {
+  if (IMAGE_EXTENSIONS.has(extension)) {
+    return fileToDataUrl(file);
+  }
+  return file.text();
+}
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(String(reader.result ?? '')));
+    reader.addEventListener('error', () => reject(reader.error));
+    reader.readAsDataURL(file);
+  });
 }
 
 function dedupeByPath(candidates: UploadCandidate[]) {
