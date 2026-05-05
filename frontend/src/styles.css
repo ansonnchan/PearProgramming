@@ -83,19 +83,19 @@ button:disabled {
   align-items: center;
   gap: 10px;
   color: #21351b;
-  font-size: 15px;
+  font-size: 10px;
   font-weight: 800;
 }
 
 .landing-brand-hero {
   justify-content: center;
-  font-size: 34px;
+  font-size: 64px;
   letter-spacing: 0;
 }
 
 .landing-brand-hero .brand-logo-large {
-  width: 62px;
-  height: 62px;
+  width: 104px;
+  height: 104px;
 }
 
 .landing-hero-grid {
@@ -120,10 +120,11 @@ button:disabled {
 }
 
 .landing-copy h1 {
-  margin: 0;
+  max-width: 720px;
+  margin: 8px 0 0;
   color: #1e2f18;
-  font-size: 58px;
-  line-height: 1.02;
+  font-size: 34px;
+  line-height: 1.18;
   letter-spacing: 0;
 }
 
@@ -144,6 +145,7 @@ button:disabled {
   color: #24331e;
   box-shadow: 0 24px 70px rgb(72 93 52 / 20%);
   backdrop-filter: blur(12px);
+  transform: translate(160px, -24px);
 }
 
 .room-card-heading {
@@ -221,8 +223,8 @@ button:disabled {
   right: 18px;
   bottom: 12px;
   z-index: 1;
-  width: min(190px, 28vw);
-  max-height: 34vh;
+  width: min(300px, 45vw);
+  max-height: 50vh;
   object-fit: contain;
   filter: drop-shadow(0 18px 28px rgb(71 91 45 / 22%));
   animation: pear-bob 5.5s ease-in-out infinite;
@@ -258,7 +260,7 @@ button:disabled {
 
 .topbar {
   display: grid;
-  grid-template-columns: 210px minmax(0, 1fr) minmax(320px, auto);
+  grid-template-columns: minmax(190px, 1fr) auto minmax(190px, 1fr);
   align-items: center;
   gap: 10px;
   border-bottom: 1px solid #dedbd3;
@@ -294,6 +296,7 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  justify-self: center;
   gap: 9px;
   min-width: 0;
 }
@@ -355,6 +358,7 @@ button:disabled {
 }
 
 .topbar-actions {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -393,6 +397,52 @@ button:disabled {
 
 .danger-button:hover {
   border-color: #dfb1a8;
+  background: #fff1ec;
+}
+
+.pear-menu {
+  position: relative;
+}
+
+.pear-menu-trigger {
+  min-width: 112px;
+}
+
+.pear-menu-popover {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  width: 156px;
+  padding: 6px;
+  border: 1px solid #d9d4ca;
+  border-radius: 8px;
+  background: #fffefa;
+  box-shadow: 0 14px 34px rgb(36 53 30 / 18%);
+}
+
+.pear-menu-popover button {
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #3f3a32;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.pear-menu-popover button:hover {
+  background: #f1f7df;
+}
+
+.pear-menu-popover .danger-menu-item {
+  color: #8a2f25;
+}
+
+.pear-menu-popover .danger-menu-item:hover {
   background: #fff1ec;
 }
 
@@ -447,7 +497,16 @@ button:disabled {
   grid-template-columns: 168px minmax(0, 1fr) 38px;
 }
 
+.workspace-grid.explorer-collapsed {
+  grid-template-columns: 38px minmax(0, 1fr) 230px;
+}
+
+.workspace-grid.explorer-collapsed.chat-collapsed {
+  grid-template-columns: 38px minmax(0, 1fr) 38px;
+}
+
 .explorer,
+.explorer-rail,
 .chat,
 .chat-rail {
   min-height: 0;
@@ -455,6 +514,15 @@ button:disabled {
 }
 
 .explorer {
+  display: grid;
+  grid-template-rows: 36px auto auto minmax(0, 1fr);
+  border-right: 1px solid #d8d5cc;
+}
+
+.explorer-rail {
+  display: grid;
+  place-items: start center;
+  padding-top: 8px;
   border-right: 1px solid #d8d5cc;
 }
 
@@ -482,6 +550,13 @@ button:disabled {
   border-radius: 7px;
   background: #fffefa;
   color: #514c44;
+}
+
+.panel-minimize-button {
+  color: #4f4a40;
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .pane-title-row {
@@ -583,8 +658,24 @@ button:disabled {
   line-height: 1.35;
 }
 
+.upload-notice p {
+  margin: 0;
+}
+
+.upload-notice button {
+  height: 24px;
+  margin-top: 7px;
+  padding: 0 9px;
+  border: 1px solid #c8d5af;
+  border-radius: 6px;
+  background: #f6fbe8;
+  color: #315d22;
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .tree {
-  height: calc(100% - 116px);
+  min-height: 0;
   overflow: auto;
   padding-bottom: 8px;
 }
@@ -725,6 +816,23 @@ button:disabled {
   background: #0d1117;
   color: #c9d1d9;
   text-align: center;
+}
+
+.empty-editor-content {
+  display: grid;
+  justify-items: center;
+}
+
+.empty-pear-video {
+  width: 142px;
+  height: 142px;
+  margin-bottom: 18px;
+  border: 1px solid #30363d;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 50% 38%, rgb(63 185 80 / 24%), transparent 34%),
+    linear-gradient(135deg, #161b22, #0f2315);
+  object-fit: cover;
 }
 
 .empty-editor h1 {
@@ -1095,6 +1203,18 @@ button:disabled {
   font-weight: 800;
 }
 
+.entry-profile-modal {
+  border-color: #3d4f2c;
+  background: #152013;
+}
+
+.profile-error {
+  margin: -5px 0 12px;
+  color: #ffb4a8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-rows: 84px minmax(0, 1fr) 24px;
@@ -1110,12 +1230,21 @@ button:disabled {
     gap: 26px;
   }
 
+  .landing-panel {
+    transform: none;
+  }
+
   .landing-copy h1 {
-    font-size: 48px;
+    font-size: 30px;
   }
 
   .landing-brand-hero {
-    font-size: 30px;
+    font-size: 48px;
+  }
+
+  .landing-brand-hero .brand-logo-large {
+    width: 80px;
+    height: 80px;
   }
 
   .topbar {
@@ -1124,7 +1253,8 @@ button:disabled {
   }
 
   .room-header-center {
-    justify-content: flex-start;
+    justify-self: stretch;
+    justify-content: center;
     padding-right: 8px;
   }
 
@@ -1139,6 +1269,11 @@ button:disabled {
     grid-template-columns: 145px minmax(0, 1fr);
   }
 
+  .workspace-grid.explorer-collapsed,
+  .workspace-grid.explorer-collapsed.chat-collapsed {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
   .chat,
   .chat-rail {
     display: none;
@@ -1151,7 +1286,7 @@ button:disabled {
   }
 
   .landing-copy h1 {
-    font-size: 40px;
+    font-size: 28px;
   }
 
   .landing-copy p:not(.landing-subheading) {
@@ -1159,12 +1294,12 @@ button:disabled {
   }
 
   .landing-brand-hero {
-    font-size: 26px;
+    font-size: 34px;
   }
 
   .landing-brand-hero .brand-logo-large {
-    width: 44px;
-    height: 44px;
+    width: 62px;
+    height: 62px;
   }
 
   .landing-chibi {
@@ -1183,7 +1318,7 @@ button:disabled {
   }
 
   .room-header-center {
-    justify-content: flex-start;
+    justify-content: center;
     gap: 6px;
     overflow-x: auto;
   }
@@ -1193,11 +1328,14 @@ button:disabled {
   }
 
   .workspace-grid,
-  .workspace-grid.chat-collapsed {
+  .workspace-grid.chat-collapsed,
+  .workspace-grid.explorer-collapsed,
+  .workspace-grid.explorer-collapsed.chat-collapsed {
     grid-template-columns: 1fr;
   }
 
-  .explorer {
+  .explorer,
+  .explorer-rail {
     display: none;
   }
 
