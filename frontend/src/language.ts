@@ -1,3 +1,4 @@
+//languages offered by Monaco Editor: https://microsoft.github.io/monaco-editor/monarch.html
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   c: 'c',
   cc: 'cpp',
@@ -27,6 +28,7 @@ export function inferLanguage(path: string) {
   return LANGUAGE_BY_EXTENSION[extension] ?? 'plaintext';
 }
 
+// For styling the language badge in the file explorer
 export function languageClass(language: string) {
   if (language === 'java' || language === 'typescript' || language === 'c' || language === 'cpp') {
     return 'dot-blue';

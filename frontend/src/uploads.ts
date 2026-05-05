@@ -6,9 +6,20 @@ export type UploadCandidate = {
   content: string;
 };
 
+export type SkippedUpload = {
+  path: string;
+  reason: string;
+};
+
+export type UploadReadResult = {
+  candidates: UploadCandidate[];
+  skipped: SkippedUpload[];
+  totalFiles: number;
+};
+
 const MAX_UPLOAD_FILES = 300;
 const MAX_UPLOAD_BYTES = 1024 * 1024;
-const TEXT_EXTENSIONS = new Set([
+const ALLOWED_EXTENSIONS = new Set([
   'c',
   'cc',
   'cpp',
@@ -35,14 +46,62 @@ const TEXT_EXTENSIONS = new Set([
   'yaml',
   'yml'
 ]);
+const ALLOWED_FILENAMES = new Set(['.env.example']);
+const BLOCKED_PATH_SEGMENTS = new Set(['.git', '.hg', '.svn', 'node_modules', 'dist', 'build', 'target', '.idea']);
+const BLOCKED_FILENAMES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini']);
+export const UPLOAD_ACCEPT = [
+  ...Array.from(ALLOWED_EXTENSIONS, (extension) => `.${extension}`),
+  ...Array.from(ALLOWED_FILENAMES)
+].join(',');
 
-export async function readUploadCandidates(fileList: FileList): Promise<UploadCandidate[]> {
-  const files = [...fileList]
-    .filter((file) => file.size <= MAX_UPLOAD_BYTES && isTextLike(file))
-    .slice(0, MAX_UPLOAD_FILES);
+const BLOCKED_EXTENSIONS = new Set([
+  '7z',
+  'app',
+  'bin',
+  'class',
+  'dll',
+  'dmg',
+  'exe',
+  'gif',
+  'gz',
+  'ico',
+  'jar',
+  'jpeg',
+  'jpg',
+  'mov',
+  'mp3',
+  'mp4',
+  'pdf',
+  'png',
+  'rar',
+  'tar',
+  'wasm',
+  'webp',
+  'zip'
+]);
 
-  const candidates = await Promise.all(files.map(async (file) => {
+export async function readUploadCandidates(fileList: FileList): Promise<UploadReadResult> {
+  const files = Array.from(fileList);
+  const skipped: SkippedUpload[] = [];
+  const accepted: Array<{ file: File; path: string }> = [];
+
+  for (const file of files) {
     const path = normalizeUploadPath((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name);
+    const blockedReason = blockedReasonFor(file, path);
+    if (blockedReason) {
+      skipped.push({ path: path || file.name, reason: blockedReason });
+      continue;
+    }
+
+    if (accepted.length >= MAX_UPLOAD_FILES) {
+      skipped.push({ path, reason: `Only the first ${MAX_UPLOAD_FILES} supported files can be uploaded at once.` });
+      continue;
+    }
+
+    accepted.push({ file, path });
+  }
+
+  const candidates = await Promise.all(accepted.map(async ({ file, path }) => {
     return {
       path,
       language: inferLanguage(path),
@@ -50,7 +109,11 @@ export async function readUploadCandidates(fileList: FileList): Promise<UploadCa
     };
   }));
 
-  return dedupeByPath(candidates).sort((a, b) => a.path.localeCompare(b.path));
+  return {
+    candidates: dedupeByPath(candidates).sort((a, b) => a.path.localeCompare(b.path)),
+    skipped,
+    totalFiles: files.length
+  };
 }
 
 export function projectNameForPaths(paths: string[]) {
@@ -71,9 +134,36 @@ export function normalizeUploadPath(path: string) {
   return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '').trim();
 }
 
-function isTextLike(file: File) {
-  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-  return file.type.startsWith('text/') || file.type.includes('json') || TEXT_EXTENSIONS.has(extension);
+function blockedReasonFor(file: File, path: string) {
+  if (!path) {
+    return 'This file has no readable path.';
+  }
+
+  const parts = path.toLowerCase().split('/').filter(Boolean);
+  const name = parts[parts.length - 1] ?? '';
+  const extension = name.includes('.') ? name.split('.').pop() ?? '' : '';
+
+  if (parts.some((part) => BLOCKED_PATH_SEGMENTS.has(part) || part.endsWith('.app'))) {
+    return 'Project build, dependency, source-control, and app bundle folders are skipped.';
+  }
+
+  if (BLOCKED_FILENAMES.has(name)) {
+    return 'System files are skipped.';
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return 'Files must be 1 MB or smaller.';
+  }
+
+  if (BLOCKED_EXTENSIONS.has(extension)) {
+    return 'Binary, executable, archive, and media files are skipped.';
+  }
+
+  if (ALLOWED_FILENAMES.has(name) || ALLOWED_EXTENSIONS.has(extension)) {
+    return null;
+  }
+
+  return 'Only supported code and text project files can be uploaded.';
 }
 
 function dedupeByPath(candidates: UploadCandidate[]) {

@@ -11,8 +11,10 @@ import {
   FolderPlus,
   ImagePlus,
   LogIn,
+  LogOut,
   MessageSquare,
   Send,
+  Trash2,
   Upload,
   UserRound,
   Wifi,
@@ -40,8 +42,9 @@ import {
   YJS_URL
 } from './api';
 import { inferLanguage, languageClass } from './language';
-import type { UploadCandidate } from './uploads';
-import { projectNameForPaths, readUploadCandidates } from './uploads';
+import pearLogoUrl from '../assets/favicon.png';
+import type { UploadCandidate, UploadReadResult } from './uploads';
+import { projectNameForPaths, readUploadCandidates, UPLOAD_ACCEPT } from './uploads';
 import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, WorkspaceFile } from './types';
 
 const USER_COLORS = ['#378ADD', '#1D9E75', '#F59E0B', '#D946EF', '#EF4444'];
@@ -79,11 +82,24 @@ type PendingSwitch = {
   approvedUserIds: string[];
 };
 
+type MemberRealtimeEvent = {
+  type: 'joined' | 'left' | 'presence-sync' | 'lead-sync' | 'lead-transferred' | 'room-closed';
+  userId: string;
+  displayName?: string;
+  color?: string;
+  avatarUrl?: string;
+  leadUserId?: string;
+  targetUserId?: string;
+  targetUserName?: string;
+  at?: string;
+};
+
 type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
 
 export default function App() {
   const [room, setRoom] = useState<Room | null>(null);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
+  const [openFileIds, setOpenFileIds] = useState<string[]>([]);
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [annotations, setAnnotations] = useState<AiAnnotation[]>([]);
@@ -99,6 +115,7 @@ export default function App() {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [landingCode, setLandingCode] = useState('');
   const [landingError, setLandingError] = useState('');
+  const [landingNotice, setLandingNotice] = useState('');
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
   const [chatOpen, setChatOpen] = useState(true);
@@ -106,18 +123,28 @@ export default function App() {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
+  const [uploadNotice, setUploadNotice] = useState('');
+  const [leadUserId, setLeadUserId] = useState<string | null>(null);
+  const [delegateOpen, setDelegateOpen] = useState(false);
+  const [delegateUserId, setDelegateUserId] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileDraftName, setProfileDraftName] = useState('');
   const [profileDraftAvatar, setProfileDraftAvatar] = useState<string | undefined>();
   const [user, setUser] = useState<Member>(() => getOrCreateLocalUser());
 
-  const activeFile = files.find((file) => file.id === activeFileId) ?? files[0] ?? null;
+  const openFiles = openFileIds
+    .map((fileId) => files.find((file) => file.id === fileId))
+    .filter((file): file is WorkspaceFile => Boolean(file));
+  const activeFile = openFiles.find((file) => file.id === activeFileId) ?? null;
   const activeProjectName = files.length > 0 ? projectNameForPaths(files.map((file) => file.path)) : 'Empty room';
   const remoteMembers = Object.values(cursors)
     .filter((cursor) => cursor.userId !== user.id)
     .map<Member>((cursor) => ({ id: cursor.userId, name: cursor.displayName, color: cursor.color }));
   const humanMembers = uniqueMembers([user, ...Object.values(presenceMembers), ...remoteMembers]);
   const members = uniqueMembers([...humanMembers, { id: 'ai', name: 'AI', color: '#8B5CF6', ai: true }]);
+  const isLeadPear = leadUserId === user.id;
+  const roleLabel = isLeadPear ? 'Lead Pear' : 'Junior Pear';
+  const delegateCandidates = humanMembers.filter((member) => member.id !== user.id);
 
   const editorRef = useRef<unknown>(null);
   const monacoRef = useRef<any>(null);
@@ -133,6 +160,7 @@ export default function App() {
   const roomRef = useRef<Room | null>(null);
   const activeFileRef = useRef<WorkspaceFile | null>(null);
   const stompRef = useRef<Client | null>(null);
+  const leadUserIdRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
@@ -146,10 +174,11 @@ export default function App() {
 
     setJoiningRoom(true);
     setLandingError('');
+    setLandingNotice('');
     try {
       const joinedRoom = await getRoom(code);
       const joinedFiles = await listFiles(joinedRoom.workspaceId);
-      openRoom(joinedRoom, joinedFiles, replaceUrl);
+      openRoom(joinedRoom, joinedFiles, replaceUrl, null);
     } catch {
       setLandingError(`Could not find room ${code}.`);
     } finally {
@@ -160,18 +189,19 @@ export default function App() {
   const handleCreateRoom = useCallback(async () => {
     setCreatingRoom(true);
     setLandingError('');
+    setLandingNotice('');
     try {
       const workspace = await createWorkspace(`Pear room ${formatRoomNameDate(new Date())}`);
       const createdRoom = await createRoom(workspace.id);
-      openRoom(createdRoom, [], true);
+      openRoom(createdRoom, [], true, user.id);
     } catch {
       const fallbackRoom = { ...FALLBACK_ROOM, code: randomRoomCode() };
-      openRoom(fallbackRoom, [], true);
+      openRoom(fallbackRoom, [], true, user.id);
       setLandingError('Backend is offline, so this room is local-only for now.');
     } finally {
       setCreatingRoom(false);
     }
-  }, []);
+  }, [user.id]);
 
   const scheduleAutosave = useCallback((fileId: string, content: string) => {
     const currentRoom = roomRef.current;
@@ -266,6 +296,10 @@ export default function App() {
   useEffect(() => {
     stompRef.current = stompClient;
   }, [stompClient]);
+
+  useEffect(() => {
+    leadUserIdRef.current = leadUserId;
+  }, [leadUserId]);
 
   useEffect(() => {
     folderInputRef.current?.setAttribute('webkitdirectory', '');
@@ -364,31 +398,7 @@ export default function App() {
           setCursors((current) => ({ ...current, [cursor.userId]: cursor }));
         });
         client.subscribe(`/topic/room/${room.code}/members`, (message: IMessage) => {
-          const event = JSON.parse(message.body) as { type: string; userId: string; displayName?: string; color?: string; avatarUrl?: string };
-          if (event.type === 'left') {
-            setPresenceMembers((current) => {
-              const next = { ...current };
-              delete next[event.userId];
-              return next;
-            });
-            setCursors((current) => {
-              const next = { ...current };
-              delete next[event.userId];
-              return next;
-            });
-            return;
-          }
-          if (event.type === 'joined' && event.userId !== user.id) {
-            setPresenceMembers((current) => ({
-              ...current,
-              [event.userId]: {
-                id: event.userId,
-                name: event.displayName || 'Guest',
-                color: event.color || '#378ADD',
-                avatarUrl: event.avatarUrl
-              }
-            }));
-          }
+          handleMemberEvent(JSON.parse(message.body) as MemberRealtimeEvent, client);
         });
         client.subscribe(`/topic/room/${room.code}/annotations`, (message: IMessage) => {
           const annotation = JSON.parse(message.body) as AiAnnotation;
@@ -405,6 +415,7 @@ export default function App() {
             displayName: user.name,
             color: user.color,
             avatarUrl: user.avatarUrl,
+            leadUserId: leadUserIdRef.current,
             at: new Date().toISOString()
           })
         });
@@ -420,7 +431,15 @@ export default function App() {
       if (client.connected) {
         client.publish({
           destination: `/app/room/${room.code}/members`,
-          body: JSON.stringify({ type: 'left', userId: user.id, displayName: user.name, color: user.color, at: new Date().toISOString() })
+          body: JSON.stringify({
+            type: 'left',
+            userId: user.id,
+            displayName: user.name,
+            color: user.color,
+            avatarUrl: user.avatarUrl,
+            leadUserId: leadUserIdRef.current,
+            at: new Date().toISOString()
+          })
         });
       }
       void client.deactivate();
@@ -559,6 +578,7 @@ export default function App() {
         creating={creatingRoom}
         error={landingError}
         joining={joiningRoom}
+        notice={landingNotice}
         onCodeChange={setLandingCode}
         onCreate={handleCreateRoom}
         onJoin={() => void joinRoom(landingCode)}
@@ -573,36 +593,53 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark">Pear</span>
-          <span>PearProgram</span>
+          <img alt="" className="brand-logo" src={pearLogoUrl} />
+          <span>PearProgramming</span>
         </div>
-        <div className="project-label">
-          <span>{activeProjectName}</span>
+        <div className="room-header-center">
+          <span className="project-label">{activeProjectName}</span>
+          <button className="room-code-chip" onClick={copyRoomCode} title="Copy room code" type="button">
+            <span>Room Code: {room.code}</span>
+            <Copy size={13} />
+          </button>
+          <span className={`role-chip ${isLeadPear ? 'role-lead' : ''}`}>{roleLabel}</span>
         </div>
-        <div className="collaborators" aria-label="Collaborators">
-          <span className="online-dot" />
-          <span className="online-count">{Math.max(1, humanMembers.length)} online</span>
-          {members.map((member) => member.id === user.id ? (
-            <button
-              className="avatar avatar-button"
-              key={member.id}
-              onClick={() => openProfileEditor(user)}
-              style={{ backgroundColor: `${member.color}22`, color: member.color }}
-              title="Edit profile"
-              type="button"
-            >
-              {member.avatarUrl ? <img alt="" src={member.avatarUrl} /> : initials(member.name)}
+        <div className="topbar-actions">
+          <div className="collaborators" aria-label="Collaborators">
+            <span className="online-dot" />
+            <span className="online-count">{Math.max(1, humanMembers.length)} online</span>
+            {members.map((member) => member.id === user.id ? (
+              <button
+                className="avatar avatar-button"
+                key={member.id}
+                onClick={() => openProfileEditor(user)}
+                style={{ backgroundColor: `${member.color}22`, color: member.color }}
+                title="Edit profile"
+                type="button"
+              >
+                {member.avatarUrl ? <img alt="" src={member.avatarUrl} /> : initials(member.name)}
+              </button>
+            ) : (
+              <span
+                className={`avatar ${member.ai ? 'avatar-ai' : ''}`}
+                key={member.id}
+                style={{ backgroundColor: member.ai ? '#EEEDFE' : `${member.color}22`, color: member.color }}
+                title={member.name}
+              >
+                {member.ai ? <Bot size={13} /> : member.avatarUrl ? <img alt="" src={member.avatarUrl} /> : initials(member.name)}
+              </span>
+            ))}
+          </div>
+          <button className="topbar-button" onClick={handleLeaveRoom} type="button">
+            <LogOut size={14} />
+            <span>Leave Room</span>
+          </button>
+          {isLeadPear && (
+            <button className="topbar-button danger-button" onClick={handleCloseRoom} type="button">
+              <Trash2 size={14} />
+              <span>Close Room</span>
             </button>
-          ) : (
-            <span
-              className={`avatar ${member.ai ? 'avatar-ai' : ''}`}
-              key={member.id}
-              style={{ backgroundColor: member.ai ? '#EEEDFE' : `${member.color}22`, color: member.color }}
-              title={member.name}
-            >
-              {member.ai ? <Bot size={13} /> : member.avatarUrl ? <img alt="" src={member.avatarUrl} /> : initials(member.name)}
-            </span>
-          ))}
+          )}
         </div>
       </header>
 
@@ -629,8 +666,9 @@ export default function App() {
               <span>Upload folder</span>
             </button>
           </div>
-          <input className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, false)} ref={fileInputRef} type="file" />
-          <input className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, true)} ref={folderInputRef} type="file" />
+          <input accept={UPLOAD_ACCEPT} className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, false)} ref={fileInputRef} type="file" />
+          <input accept={UPLOAD_ACCEPT} className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, true)} ref={folderInputRef} type="file" />
+          {uploadNotice && <p className="upload-notice">{uploadNotice}</p>}
           <div className="tree">
             {tree.length > 0 ? tree.map((node) => (
               <TreeRow
@@ -638,7 +676,7 @@ export default function App() {
                 expandedFolders={expandedFolders}
                 key={node.path}
                 node={node}
-                onFileSelect={setActiveFileId}
+                onFileSelect={openFileTab}
                 onToggleFolder={toggleFolder}
               />
             )) : (
@@ -649,16 +687,16 @@ export default function App() {
 
         <section className="editor-area">
           <div className="tabs">
-            {files.map((file) => (
-              <button
-                className={`tab ${file.id === activeFile?.id ? 'tab-active' : ''}`}
-                key={file.id}
-                onClick={() => setActiveFileId(file.id)}
-                type="button"
-              >
-                <span className={`language-dot ${languageClass(file.language)}`} />
-                <span>{basename(file.path)}</span>
-              </button>
+            {openFiles.map((file) => (
+              <div className={`tab ${file.id === activeFile?.id ? 'tab-active' : ''}`} key={file.id}>
+                <button className="tab-main" onClick={() => setActiveFileId(file.id)} title={file.path} type="button">
+                  <span className={`language-dot ${languageClass(file.language)}`} />
+                  <span>{basename(file.path)}</span>
+                </button>
+                <button className="tab-close" onClick={() => closeFileTab(file.id)} title={`Close ${basename(file.path)}`} type="button">
+                  <X size={12} />
+                </button>
+              </div>
             ))}
           </div>
           <div className="editor-frame">
@@ -760,11 +798,6 @@ export default function App() {
         <span className="encoding">UTF-8 - LF</span>
       </footer>
 
-      <button className="room-code-float" onClick={copyRoomCode} title="Copy room code" type="button">
-        <span>Room Code: {room.code}</span>
-        <Copy size={13} />
-      </button>
-
       {pendingSwitch && (
         <div className="modal-backdrop">
           <section className="confirm-modal" role="dialog" aria-modal="true" aria-label="Confirm project switch">
@@ -783,6 +816,31 @@ export default function App() {
               <button className="primary-button" disabled={hasApproved} onClick={approveProjectSwitch} type="button">
                 <Check size={15} />
                 {hasApproved ? 'Agreed' : 'Agree'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {delegateOpen && (
+        <div className="modal-backdrop">
+          <section className="confirm-modal" role="dialog" aria-modal="true" aria-label="Choose new Lead Pear">
+            <header>
+              <h2>Delegate Lead Pear</h2>
+            </header>
+            <p>Select the participant who should own this room after you leave.</p>
+            <label className="field-label">
+              New Lead Pear
+              <select onChange={(event) => setDelegateUserId(event.target.value)} value={delegateUserId}>
+                {delegateCandidates.map((member) => (
+                  <option key={member.id} value={member.id}>{member.name}</option>
+                ))}
+              </select>
+            </label>
+            <div className="modal-actions">
+              <button className="secondary-button" onClick={() => setDelegateOpen(false)} type="button">Cancel</button>
+              <button className="primary-button" disabled={!delegateUserId} onClick={confirmDelegateAndLeave} type="button">
+                Transfer and leave
               </button>
             </div>
           </section>
@@ -822,16 +880,24 @@ export default function App() {
     </main>
   );
 
-  function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean) {
+  function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean, nextLeadUserId: string | null) {
+    const sortedFiles = nextFiles.sort(sortByPath);
+    const firstFileId = sortedFiles[0]?.id ?? null;
     setRoom(nextRoom);
-    setFiles(nextFiles.sort(sortByPath));
-    setActiveFileId(nextFiles[0]?.id ?? null);
-    setExpandedFolders(foldersForPaths(nextFiles.map((file) => file.path)));
+    setFiles(sortedFiles);
+    setOpenFileIds(firstFileId ? [firstFileId] : []);
+    setActiveFileId(firstFileId);
+    setExpandedFolders(foldersForPaths(sortedFiles.map((file) => file.path)));
     setMessages([]);
     setAnnotations([]);
     setCursors({});
     setPresenceMembers({});
-    setSaveState(nextFiles.length > 0 ? 'saved' : 'idle');
+    setLeadUserId(nextLeadUserId);
+    setDelegateOpen(false);
+    setDelegateUserId('');
+    setUploadNotice('');
+    setLandingNotice('');
+    setSaveState(sortedFiles.length > 0 ? 'saved' : 'idle');
     setLastSavedAt(null);
     if (replaceUrl) {
       window.history.replaceState(null, '', `/join/${nextRoom.code}`);
@@ -896,6 +962,105 @@ export default function App() {
     }
   }
 
+  function openFileTab(fileId: string) {
+    setOpenFileIds((current) => (current.includes(fileId) ? current : [...current, fileId]));
+    setActiveFileId(fileId);
+  }
+
+  function closeFileTab(fileId: string) {
+    setOpenFileIds((current) => {
+      const index = current.indexOf(fileId);
+      const next = current.filter((id) => id !== fileId);
+      if (activeFileId === fileId) {
+        setActiveFileId(next[index] ?? next[index - 1] ?? null);
+      }
+      return next;
+    });
+  }
+
+  function returnToLanding(notice = '') {
+    setRoom(null);
+    setFiles([]);
+    setOpenFileIds([]);
+    setActiveFileId(null);
+    setMessages([]);
+    setAnnotations([]);
+    setCursors({});
+    setPresenceMembers({});
+    setLeadUserId(null);
+    setDelegateOpen(false);
+    setDelegateUserId('');
+    setPendingSwitch(null);
+    setUploadNotice('');
+    setSaveState('idle');
+    setLastSavedAt(null);
+    setLandingCode('');
+    setLandingError('');
+    setLandingNotice(notice);
+    window.history.replaceState(null, '', '/');
+  }
+
+  function handleLeaveRoom() {
+    if (!isLeadPear) {
+      returnToLanding();
+      return;
+    }
+
+    if (delegateCandidates.length > 0) {
+      setDelegateUserId(delegateCandidates[0].id);
+      setDelegateOpen(true);
+      return;
+    }
+
+    publishMemberEvent({
+      type: 'room-closed',
+      userId: user.id,
+      displayName: user.name,
+      color: user.color,
+      avatarUrl: user.avatarUrl,
+      leadUserId: user.id,
+      at: new Date().toISOString()
+    });
+    returnToLanding();
+  }
+
+  function handleCloseRoom() {
+    if (!isLeadPear || !window.confirm('Close this room for everyone?')) {
+      return;
+    }
+
+    publishMemberEvent({
+      type: 'room-closed',
+      userId: user.id,
+      displayName: user.name,
+      color: user.color,
+      avatarUrl: user.avatarUrl,
+      leadUserId: user.id,
+      at: new Date().toISOString()
+    });
+    returnToLanding('Room closed.');
+  }
+
+  function confirmDelegateAndLeave() {
+    const nextLead = delegateCandidates.find((member) => member.id === delegateUserId);
+    if (!nextLead) {
+      return;
+    }
+
+    publishMemberEvent({
+      type: 'lead-transferred',
+      userId: user.id,
+      displayName: user.name,
+      color: user.color,
+      avatarUrl: user.avatarUrl,
+      leadUserId: nextLead.id,
+      targetUserId: nextLead.id,
+      targetUserName: nextLead.name,
+      at: new Date().toISOString()
+    });
+    returnToLanding();
+  }
+
   async function handleNewFile() {
     const currentRoom = roomRef.current;
     if (!currentRoom) {
@@ -910,12 +1075,12 @@ export default function App() {
     try {
       const created = await createFile(currentRoom.workspaceId, path, '', inferLanguage(path));
       setFiles((current) => mergeFiles(current, [created]).sort(sortByPath));
-      setActiveFileId(created.id);
+      openFileTab(created.id);
       expandForPath(path);
     } catch {
       const local = createLocalFile(path, currentRoom.workspaceId);
       setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
-      setActiveFileId(local.id);
+      openFileTab(local.id);
       expandForPath(path);
     }
   }
@@ -935,12 +1100,12 @@ export default function App() {
     try {
       const created = await createFile(currentRoom.workspaceId, markerPath, '', 'plaintext');
       setFiles((current) => mergeFiles(current, [created]).sort(sortByPath));
-      setActiveFileId(created.id);
+      openFileTab(created.id);
       expandForPath(markerPath);
     } catch {
       const local = createLocalFile(markerPath, currentRoom.workspaceId);
       setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
-      setActiveFileId(local.id);
+      openFileTab(local.id);
       expandForPath(markerPath);
     }
   }
@@ -950,8 +1115,10 @@ export default function App() {
       return;
     }
 
-    const candidates = await readUploadCandidates(input.files);
+    const uploadResult = await readUploadCandidates(input.files);
+    const { candidates } = uploadResult;
     input.value = '';
+    setUploadNotice(uploadNoticeText(uploadResult));
     if (candidates.length === 0) {
       setSaveState('error');
       return;
@@ -1011,7 +1178,14 @@ export default function App() {
   function applyUploadedFiles(uploaded: WorkspaceFile[], replaceExisting: boolean) {
     setFiles((current) => {
       const next = (replaceExisting ? uploaded : mergeFiles(current, uploaded)).sort(sortByPath);
-      setActiveFileId(next[0]?.id ?? null);
+      const nextFileIds = new Set(next.map((file) => file.id));
+      const uploadedIds = uploaded.map((file) => file.id).filter((fileId) => nextFileIds.has(fileId));
+      const nextOpenIds = replaceExisting
+        ? uploadedIds
+        : uniqueStrings([...openFileIds.filter((fileId) => nextFileIds.has(fileId)), ...uploadedIds]);
+      const fallbackOpenIds = nextOpenIds.length > 0 ? nextOpenIds : next[0] ? [next[0].id] : [];
+      setOpenFileIds(fallbackOpenIds);
+      setActiveFileId(uploadedIds[0] ?? fallbackOpenIds[0] ?? null);
       setExpandedFolders(foldersForPaths(next.map((file) => file.path)));
       return next;
     });
@@ -1155,6 +1329,106 @@ export default function App() {
     });
   }
 
+  function publishMemberEvent(event: MemberRealtimeEvent) {
+    const currentRoom = roomRef.current;
+    const client = stompRef.current;
+    if (!currentRoom || !client?.connected) {
+      return;
+    }
+
+    client.publish({
+      destination: `/app/room/${currentRoom.code}/members`,
+      body: JSON.stringify(event)
+    });
+  }
+
+  function handleMemberEvent(event: MemberRealtimeEvent, client: Client) {
+    if (!event.userId) {
+      return;
+    }
+
+    if (event.type === 'room-closed') {
+      if (event.userId !== user.id) {
+        returnToLanding('The Lead Pear closed this room.');
+      }
+      return;
+    }
+
+    if (event.type === 'lead-transferred' || event.type === 'lead-sync') {
+      if (!event.targetUserId || event.targetUserId === user.id || event.type === 'lead-transferred') {
+        setLeadUserId(event.leadUserId ?? event.targetUserId ?? event.userId);
+      }
+      return;
+    }
+
+    if (event.type === 'left') {
+      setPresenceMembers((current) => {
+        const next = { ...current };
+        delete next[event.userId];
+        return next;
+      });
+      setCursors((current) => {
+        const next = { ...current };
+        delete next[event.userId];
+        return next;
+      });
+      return;
+    }
+
+    if (event.leadUserId && !leadUserIdRef.current) {
+      setLeadUserId(event.leadUserId);
+    }
+
+    if (event.userId !== user.id && (event.type === 'joined' || (event.type === 'presence-sync' && event.targetUserId === user.id))) {
+      setPresenceMembers((current) => ({
+        ...current,
+        [event.userId]: {
+          id: event.userId,
+          name: event.displayName || 'Guest',
+          color: event.color || '#378ADD',
+          avatarUrl: event.avatarUrl
+        }
+      }));
+    }
+
+    if (event.type === 'joined' && event.userId !== user.id) {
+      const currentRoom = roomRef.current;
+      if (!currentRoom) {
+        return;
+      }
+
+      client.publish({
+        destination: `/app/room/${currentRoom.code}/members`,
+        body: JSON.stringify({
+          type: 'presence-sync',
+          userId: user.id,
+          displayName: user.name,
+          color: user.color,
+          avatarUrl: user.avatarUrl,
+          leadUserId: leadUserIdRef.current,
+          targetUserId: event.userId,
+          at: new Date().toISOString()
+        })
+      });
+
+      if (leadUserIdRef.current === user.id) {
+        client.publish({
+          destination: `/app/room/${currentRoom.code}/members`,
+          body: JSON.stringify({
+            type: 'lead-sync',
+            userId: user.id,
+            displayName: user.name,
+            color: user.color,
+            avatarUrl: user.avatarUrl,
+            leadUserId: user.id,
+            targetUserId: event.userId,
+            at: new Date().toISOString()
+          })
+        });
+      }
+    }
+  }
+
   function toggleFolder(path: string) {
     setExpandedFolders((current) => {
       const next = new Set(current);
@@ -1242,6 +1516,7 @@ function LandingPage({
   creating,
   error,
   joining,
+  notice,
   onCodeChange,
   onCreate,
   onJoin
@@ -1250,43 +1525,64 @@ function LandingPage({
   creating: boolean;
   error: string;
   joining: boolean;
+  notice: string;
   onCodeChange: (code: string) => void;
   onCreate: () => void;
   onJoin: () => void;
 }) {
   return (
     <main className="landing-shell">
-      <section className="landing-panel">
-        <div className="landing-brand">
-          <span className="brand-mark">Pear</span>
-          <span>PearProgram</span>
+      <section className="landing-hero">
+        <nav className="landing-nav">
+          <div className="landing-brand">
+            <img alt="" className="brand-logo brand-logo-large" src={pearLogoUrl} />
+            <span>PearProgramming</span>
+          </div>
+        </nav>
+        <div className="landing-hero-grid">
+          <div className="landing-copy">
+            <p className="landing-kicker">Real-time coding rooms</p>
+            <h1>Code together in a lightweight browser IDE.</h1>
+            <p>
+              PearProgramming gives teams a shared room where they can upload files or folders,
+              edit together in real time, chat alongside the code, and move through a project
+              without leaving the browser.
+            </p>
+            <a className="hero-cta" href="#room-actions">Get Started</a>
+          </div>
+          <section className="landing-panel" id="room-actions">
+            <div className="room-card-heading">
+              <span>Create or Join a Room</span>
+              <small>Start empty, then upload your project.</small>
+            </div>
+            <div className="landing-actions">
+              <button className="primary-button create-room-button" disabled={creating} onClick={onCreate} type="button">
+                <Upload size={16} />
+                {creating ? 'Creating...' : 'Create Room'}
+              </button>
+              <form
+                className="join-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  onJoin();
+                }}
+              >
+                <input
+                  autoCapitalize="characters"
+                  onChange={(event) => onCodeChange(event.target.value)}
+                  placeholder="Enter Room Code"
+                  value={code}
+                />
+                <button className="secondary-button" disabled={joining} type="submit">
+                  <LogIn size={15} />
+                  {joining ? 'Joining...' : 'Join Room'}
+                </button>
+              </form>
+            </div>
+            {notice && <p className="landing-notice">{notice}</p>}
+            {error && <p className="landing-error">{error}</p>}
+          </section>
         </div>
-        <h1>Create or join a coding room</h1>
-        <div className="landing-actions">
-          <button className="primary-button create-room-button" disabled={creating} onClick={onCreate} type="button">
-            <Upload size={16} />
-            {creating ? 'Creating...' : 'Create empty room'}
-          </button>
-          <form
-            className="join-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              onJoin();
-            }}
-          >
-            <input
-              autoCapitalize="characters"
-              onChange={(event) => onCodeChange(event.target.value)}
-              placeholder="Enter room code"
-              value={code}
-            />
-            <button className="secondary-button" disabled={joining} type="submit">
-              <LogIn size={15} />
-              {joining ? 'Joining...' : 'Join'}
-            </button>
-          </form>
-        </div>
-        {error && <p className="landing-error">{error}</p>}
       </section>
     </main>
   );
@@ -1549,6 +1845,27 @@ function saveStatusText(state: SaveState, lastSavedAt: string | null) {
     return 'Autosave retrying';
   }
   return 'Autosave ready';
+}
+
+function uploadNoticeText(result: UploadReadResult) {
+  if (result.skipped.length === 0) {
+    return result.candidates.length === 1
+      ? 'Selected 1 supported file.'
+      : `Selected ${result.candidates.length} supported files.`;
+  }
+
+  const examples = result.skipped
+    .slice(0, 3)
+    .map((item) => basename(item.path))
+    .join(', ');
+  const suffix = result.skipped.length > 3 ? ', and more' : '';
+  const skippedText = `Skipped ${result.skipped.length} unsupported file${result.skipped.length === 1 ? '' : 's'}${examples ? `: ${examples}${suffix}` : ''}.`;
+
+  if (result.candidates.length === 0) {
+    return `No supported code files found. ${skippedText}`;
+  }
+
+  return `Selected ${result.candidates.length} supported file${result.candidates.length === 1 ? '' : 's'}. ${skippedText}`;
 }
 
 function fileToDataUrl(file: File) {
