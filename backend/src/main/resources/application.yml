@@ -3,7 +3,7 @@ spring:
     name: pearprogram-backend
   data:
     redis:
-      host: ${SPRING_REDIS_HOST:localhost}
+      host: ${SPRING_REDIS_HOST:172.29.99.145}
       port: ${SPRING_REDIS_PORT:6379}
       password: ${SPRING_REDIS_PASSWORD:}
       ssl:

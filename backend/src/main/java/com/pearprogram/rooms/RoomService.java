@@ -9,8 +9,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.security.SecureRandom;
-import java.time.Duration;
+//import java.time.Duration;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,7 +19,7 @@ public class RoomService {
     private static final Logger log = LoggerFactory.getLogger(RoomService.class);
     private final RoomCodeGenerator roomCodeGenerator;
     private final EphemeralRoomStateService roomStateService;
-    private final Duration roomTtl;
+   // private final Duration roomTtl;
     private final Set<String> pendingCleanup = ConcurrentHashMap.newKeySet();
 
     public RoomService(
@@ -30,7 +29,7 @@ public class RoomService {
     ) {
         this.roomCodeGenerator = roomCodeGenerator;
         this.roomStateService = roomStateService;
-        this.roomTtl = Duration.ofHours(ttlHours);
+        //this.roomTtl = Duration.ofHours(ttlHours);
     }
 
     public RoomCreateResponse createRoom() {

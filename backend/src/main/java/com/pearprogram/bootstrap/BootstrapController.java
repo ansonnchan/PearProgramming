@@ -2,7 +2,6 @@ package com.pearprogram.bootstrap;
 
 import com.pearprogram.files.FileService;
 import com.pearprogram.rooms.RoomCreateResponse;
-import com.pearprogram.rooms.RoomDto;
 import com.pearprogram.rooms.RoomService;
 import com.pearprogram.workspaces.WorkspaceDto;
 import com.pearprogram.workspaces.WorkspaceService;
