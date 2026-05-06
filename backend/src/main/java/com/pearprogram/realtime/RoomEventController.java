@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.http.HttpStatus;
+import org.springframework.lang.Nullable;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -35,7 +36,7 @@ public class RoomEventController {
             EphemeralRoomStateService roomStateService,
             AiParticipantService aiParticipantService,
             AiAnnotationService aiAnnotationService,
-            MeterRegistry meterRegistry
+            @Nullable MeterRegistry meterRegistry
     ) {
         this.messagingTemplate = messagingTemplate;
         this.roomService = roomService;
@@ -122,7 +123,7 @@ public class RoomEventController {
     @MessageMapping("/room/{code}/ping")
     public void ping(@DestinationVariable String code, PingMessage ping) {
         long now = System.currentTimeMillis();
-        if (ping.sentAt() > 0 && ping.sentAt() <= now) {
+        if (meterRegistry != null && ping.sentAt() > 0 && ping.sentAt() <= now) {
             Timer.builder("ws_latency_ms")
                     .description("WebSocket round-trip time measured from STOMP ping/pong")
                     .tag("room", code)
@@ -133,11 +134,13 @@ public class RoomEventController {
     }
 
     private void incrementChatRate(String code) {
-        Counter.builder("chat_messages_per_sec")
-                .description("Rate of chat messages per room")
-                .tag("room", code)
-                .register(meterRegistry)
-                .increment();
+        if (meterRegistry != null) {
+            Counter.builder("chat_messages_per_sec")
+                    .description("Rate of chat messages per room")
+                    .tag("room", code)
+                    .register(meterRegistry)
+                    .increment();
+        }
     }
 
     private void maybeCreatePlaceholderAnnotation(String roomCode, ChatInboundMessage inbound) {
