@@ -18,7 +18,7 @@ import {
   WifiOff,
   X
 } from 'lucide-react';
-import { type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { type DragEvent, type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import SockJS from 'sockjs-client';
 import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
@@ -44,7 +44,7 @@ import { inferLanguage, languageClass } from './language';
 import pearLogoUrl from '../assets/favicon.png';
 import pearChibiUrl from '../assets/pear_chibi.jpg';
 import type { UploadCandidate, UploadReadResult } from './uploads';
-import { projectNameForPaths, readUploadCandidates } from './uploads';
+import { projectNameForPaths, readDroppedUploadCandidates, readUploadCandidates, UPLOAD_ACCEPT } from './uploads';
 import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, RoomSessionState, WorkspaceFile } from './types';
 
 const DEFAULT_COLOR = '#000000';
@@ -145,6 +145,8 @@ export default function App() {
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
   const [uploadNotice, setUploadNotice] = useState('');
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [uploadDragging, setUploadDragging] = useState(false);
   const [leadUserId, setLeadUserId] = useState<string | null>(null);
   const [roomLocked, setRoomLocked] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -164,6 +166,7 @@ export default function App() {
   const [createItemError, setCreateItemError] = useState('');
   const [user, setUser] = useState<Member>(() => getOrCreateLocalUser());
   const [connectionId] = useState(() => getOrCreateConnectionId());
+  const [editorMountVersion, setEditorMountVersion] = useState(0);
 
   const openFiles = openFileIds
     .map((fileId) => files.find((file) => file.id === fileId))
@@ -296,6 +299,7 @@ export default function App() {
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    setEditorMountVersion((version) => version + 1);
     monaco.editor.defineTheme('pear-github-dark', {
       base: 'vs-dark',
       inherit: true,
@@ -710,7 +714,7 @@ export default function App() {
       provider.destroy();
       ydoc.destroy();
     };
-  }, [activeFile?.id, room?.code, user.color, user.id, user.name]);
+  }, [activeFile?.id, editorMountVersion, room?.code, user.color, user.id, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -921,11 +925,11 @@ export default function App() {
             </div>
           </div>
           <div className="upload-actions">
-            <button className="upload-button" onClick={openFilePicker} type="button">
+            <button className="upload-button" onClick={openUploadModal} type="button">
               <Upload size={14} />
               <span>Upload File</span>
             </button>
-            <button className="upload-button" onClick={openFolderPicker} type="button">
+            <button className="upload-button" onClick={openUploadModal} type="button">
               <FolderPlus size={14} />
               <span>Upload Folder</span>
             </button>
@@ -934,6 +938,7 @@ export default function App() {
           <input
             className="hidden-file-input"
             multiple
+            accept={UPLOAD_ACCEPT}
             onChange={(event) => void handleUploadInput(event.currentTarget, false)}
             ref={fileInputRef}
             type="file"
@@ -942,8 +947,13 @@ export default function App() {
           <input className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, true)} ref={folderInputRef} type="file" />
           {uploadNotice && (
             <div className="upload-notice" role="status">
+              <span className="upload-notice-icon">
+                <Check size={15} />
+              </span>
               <p>{uploadNotice}</p>
-              <button onClick={() => setUploadNotice('')} type="button">Got it</button>
+              <button onClick={() => setUploadNotice('')} type="button" title="Dismiss upload notice">
+                <X size={13} />
+              </button>
             </div>
           )}
           <div className="tree">
@@ -1010,11 +1020,11 @@ export default function App() {
                   <h1>Upload files or a project folder to start coding together.</h1>
                   <p>Your shared file tree will appear here after uploading.</p>
                   <div className="empty-editor-actions">
-                    <button onClick={openFilePicker} type="button">
+                    <button onClick={openUploadModal} type="button">
                       <Upload size={16} />
                       Upload Files
                     </button>
-                    <button onClick={openFolderPicker} type="button">
+                    <button onClick={openUploadModal} type="button">
                       <FolderPlus size={16} />
                       Upload Folder
                     </button>
@@ -1123,6 +1133,18 @@ export default function App() {
         <span>{saveStatusText(saveState, lastSavedAt)}</span>
         <span className="encoding">UTF-8 - LF</span>
       </footer>
+
+      {uploadModalOpen && (
+        <UploadModal
+          dragging={uploadDragging}
+          onCancel={closeUploadModal}
+          onChooseFiles={chooseFilesFromUploadModal}
+          onChooseFolder={chooseFolderFromUploadModal}
+          onDragLeave={() => setUploadDragging(false)}
+          onDragOver={() => setUploadDragging(true)}
+          onDrop={(event) => void handleUploadDrop(event)}
+        />
+      )}
 
       {pendingSwitch && (
         <div className="modal-backdrop">
@@ -1482,6 +1504,24 @@ export default function App() {
     ].slice(-60));
   }
 
+  function openUploadModal() {
+    setUploadModalOpen(true);
+    setUploadDragging(false);
+  }
+
+  function closeUploadModal() {
+    setUploadModalOpen(false);
+    setUploadDragging(false);
+  }
+
+  function chooseFilesFromUploadModal() {
+    openFilePicker();
+  }
+
+  function chooseFolderFromUploadModal() {
+    openFolderPicker();
+  }
+
   function openFilePicker() {
     const input = fileInputRef.current;
     if (!input) {
@@ -1504,6 +1544,19 @@ export default function App() {
     input.value = '';
     configureFolderInput(input);
     input.click();
+  }
+
+  async function handleUploadDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setUploadDragging(false);
+
+    if (!event.dataTransfer || (event.dataTransfer.files.length === 0 && event.dataTransfer.items.length === 0)) {
+      return;
+    }
+
+    const uploadResult = await readDroppedUploadCandidates(event.dataTransfer);
+    await processUploadResult(uploadResult);
   }
 
   function openFileTab(fileId: string) {
@@ -1717,6 +1770,10 @@ export default function App() {
 
     const uploadResult = await readUploadCandidates(input.files);
     input.value = '';
+    await processUploadResult(uploadResult);
+  }
+
+  async function processUploadResult(uploadResult: UploadReadResult) {
     const candidates = uploadResult.candidates;
     setUploadNotice(uploadNoticeText(uploadResult));
     if (candidates.length === 0) {
@@ -1724,6 +1781,7 @@ export default function App() {
       return;
     }
 
+    closeUploadModal();
     const newFolder = projectNameForPaths(candidates.map((file) => file.path));
     const isSwitch = files.length > 0;
     const requiredUserIds = humanMembers.map((member) => member.id);
@@ -2381,6 +2439,88 @@ function LandingPage({
         </div>
       </section>
     </main>
+  );
+}
+
+function UploadModal({
+  dragging,
+  onCancel,
+  onChooseFiles,
+  onChooseFolder,
+  onDragLeave,
+  onDragOver,
+  onDrop
+}: {
+  dragging: boolean;
+  onCancel: () => void;
+  onChooseFiles: () => void;
+  onChooseFolder: () => void;
+  onDragLeave: () => void;
+  onDragOver: () => void;
+  onDrop: (event: DragEvent<HTMLElement>) => void;
+}) {
+  return (
+    <div
+      className="modal-backdrop modal-backdrop-animated"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
+      role="presentation"
+    >
+      <section
+        aria-label="Upload files or folders"
+        aria-modal="true"
+        className={`upload-modal ${dragging ? 'upload-modal-dragging' : ''}`}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          onDragOver();
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          const nextTarget = event.relatedTarget;
+          if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+            onDragLeave();
+          }
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+          onDragOver();
+        }}
+        onDrop={onDrop}
+        role="dialog"
+      >
+        <header>
+          <div>
+            <span className="upload-modal-kicker">Pear upload</span>
+            <h2>Upload project files</h2>
+          </div>
+          <button className="icon-button" onClick={onCancel} title="Close upload panel" type="button">
+            <X size={14} />
+          </button>
+        </header>
+        <div className="upload-dropzone">
+          <span className="upload-dropzone-icon">
+            <Upload size={22} />
+          </span>
+          <strong>{dragging ? 'Drop to upload' : 'Drop files or folders here'}</strong>
+          <span>Nested folders and supported code files stay together.</span>
+        </div>
+        <div className="upload-modal-actions">
+          <button autoFocus className="secondary-button" onClick={onChooseFiles} type="button">
+            <Upload size={15} />
+            Choose Files
+          </button>
+          <button className="primary-button" onClick={onChooseFolder} type="button">
+            <FolderPlus size={15} />
+            Choose Folder
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 

@@ -17,6 +17,11 @@ export type UploadReadResult = {
   totalFiles: number;
 };
 
+type UploadEntry = {
+  file: File;
+  path: string;
+};
+
 const MAX_UPLOAD_FILES = 1500;
 const MAX_UPLOAD_BYTES = 500 * 1024;
 //add more extentions for frontend files
@@ -167,13 +172,43 @@ const BLOCKED_EXTENSIONS = new Set([
 ]);
 const IMAGE_EXTENSIONS = new Set(['gif', 'ico', 'jpeg', 'jpg', 'png', 'svg', 'webp']);
 
-export async function readUploadCandidates(fileList: FileList): Promise<UploadReadResult> {
+export async function readUploadCandidates(fileList: FileList | File[]): Promise<UploadReadResult> {
   const files = Array.from(fileList);
-  const skipped: SkippedUpload[] = [];
-  const accepted: Array<{ file: File; path: string }> = [];
+  const entries = files.map((file) => ({
+    file,
+    path: normalizeUploadPath((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name)
+  }));
 
-  for (const file of files) {
-    const path = normalizeUploadPath((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name);
+  return readUploadEntries(entries, files.length);
+}
+
+export async function readDroppedUploadCandidates(dataTransfer: DataTransfer): Promise<UploadReadResult> {
+  const entries: UploadEntry[] = [];
+  const items = Array.from(dataTransfer.items ?? []);
+  const entryItems = items
+    .map((item) => {
+      const maybeEntry = item as DataTransferItem & {
+        webkitGetAsEntry?: () => FileSystemEntry | null;
+      };
+      return maybeEntry.webkitGetAsEntry?.() ?? null;
+    })
+    .filter((entry): entry is FileSystemEntry => Boolean(entry));
+
+  if (entryItems.length > 0) {
+    for (const entry of entryItems) {
+      entries.push(...await filesFromEntry(entry, ''));
+    }
+    return readUploadEntries(entries, entries.length);
+  }
+
+  return readUploadCandidates(dataTransfer.files);
+}
+
+async function readUploadEntries(entries: UploadEntry[], totalFiles: number): Promise<UploadReadResult> {
+  const skipped: SkippedUpload[] = [];
+  const accepted: UploadEntry[] = [];
+
+  for (const { file, path } of entries) {
     const blockedReason = blockedReasonFor(file, path);
     if (blockedReason) {
       skipped.push({ path: path || file.name, reason: blockedReason });
@@ -200,8 +235,51 @@ export async function readUploadCandidates(fileList: FileList): Promise<UploadRe
   return {
     candidates: dedupeByPath(candidates).sort((a, b) => a.path.localeCompare(b.path)),
     skipped,
-    totalFiles: files.length
+    totalFiles
   };
+}
+
+async function filesFromEntry(entry: FileSystemEntry, parentPath: string): Promise<UploadEntry[]> {
+  const path = normalizeUploadPath(parentPath ? `${parentPath}/${entry.name}` : entry.name);
+  if (entry.isFile) {
+    const file = await fileFromEntry(entry as FileSystemFileEntry);
+    return [{ file, path }];
+  }
+
+  if (!entry.isDirectory) {
+    return [];
+  }
+
+  const directory = entry as FileSystemDirectoryEntry;
+  const children = await readDirectoryEntries(directory);
+  const nested = await Promise.all(children.map((child) => filesFromEntry(child, path)));
+  return nested.flat();
+}
+
+function fileFromEntry(entry: FileSystemFileEntry) {
+  return new Promise<File>((resolve, reject) => {
+    entry.file(resolve, reject);
+  });
+}
+
+function readDirectoryEntries(directory: FileSystemDirectoryEntry) {
+  const reader = directory.createReader();
+  const entries: FileSystemEntry[] = [];
+
+  return new Promise<FileSystemEntry[]>((resolve, reject) => {
+    const readBatch = () => {
+      reader.readEntries((batch) => {
+        if (batch.length === 0) {
+          resolve(entries);
+          return;
+        }
+        entries.push(...batch);
+        readBatch();
+      }, reject);
+    };
+
+    readBatch();
+  });
 }
 
 export function projectNameForPaths(paths: string[]) {
