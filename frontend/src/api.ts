@@ -1,9 +1,9 @@
-import type { AiAnnotation, BootstrapResponse, ChatMessage, GitHubImportResponse, Room, RoomAccess, RoomCreateResponse, RoomJoinResponse, Workspace, WorkspaceFile } from './types';
+import type { AiAnnotation, BootstrapResponse, ChatMessage, Room, RoomAccess, RoomCreateResponse, RoomJoinResponse, Workspace, WorkspaceFile } from './types';
 import type { UploadCandidate } from './uploads';
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8081';
-export const STOMP_URL = import.meta.env.VITE_STOMP_URL ?? 'http://localhost:8081/ws';
-export const YJS_URL = import.meta.env.VITE_YJS_URL ?? 'ws://localhost:1235';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+export const STOMP_URL = import.meta.env.VITE_STOMP_URL ?? '';
+export const YJS_URL = import.meta.env.VITE_YJS_URL ?? '';
 
 export class ApiError extends Error {
   status: number;
@@ -59,10 +59,7 @@ export async function updateFileContent(fileId: string, content: string): Promis
   return {} as WorkspaceFile;
 }
 
-export async function importPlaceholderRepository(workspaceId: string, owner: string, repo: string, branch: string): Promise<GitHubImportResponse> {
-  // Imports are no longer persisted; return empty
-  return { owner, repo, branch, files: [] };
-}
+
 
 export async function listChatHistory(code: string): Promise<ChatMessage[]> {
   return getJson<ChatMessage[]>(`/api/rooms/${encodeURIComponent(code)}/chat`);

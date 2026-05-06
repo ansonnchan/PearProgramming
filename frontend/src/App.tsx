@@ -12,6 +12,7 @@ import {
   ImagePlus,
   MessageSquare,
   Send,
+  Upload,
   UserRound,
   Wifi,
   WifiOff,
@@ -37,7 +38,6 @@ import {
   listFiles,
   STOMP_URL,
   updateFileContent,
-  uploadWorkspaceFiles,
   YJS_URL
 } from './api';
 import { inferLanguage, languageClass } from './language';
@@ -178,6 +178,7 @@ export default function App() {
   const leadUserIdRef = useRef<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const entryAvatarInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -739,12 +740,25 @@ export default function App() {
             </div>
           </div>
           <div className="upload-actions">
+            <button className="upload-button" onClick={openFilePicker} type="button">
+              <Upload size={14} />
+              <span>Upload File</span>
+            </button>
             <button className="upload-button" onClick={openFolderPicker} type="button">
               <FolderPlus size={14} />
               <span>Upload Folder</span>
             </button>
           </div>
-          <input className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget)} ref={folderInputRef} type="file" />
+          {/* Hidden file input — individual files, no webkitdirectory */}
+          <input
+            className="hidden-file-input"
+            multiple
+            onChange={(event) => void handleUploadInput(event.currentTarget, false)}
+            ref={fileInputRef}
+            type="file"
+          />
+          {/* Hidden folder input — sets webkitdirectory at click time */}
+          <input className="hidden-file-input" multiple onChange={(event) => void handleUploadInput(event.currentTarget, true)} ref={folderInputRef} type="file" />
           {uploadNotice && (
             <div className="upload-notice" role="status">
               <p>{uploadNotice}</p>
@@ -812,12 +826,16 @@ export default function App() {
               <div className="empty-editor">
                 <div className="empty-editor-content">
                   <img alt="" className="empty-pear-idle" src={pearLogoUrl} />
-                  <h1>Upload a project folder to start coding together.</h1>
-                  <p>Your shared file tree will appear here once the folder import finishes.</p>
+                  <h1>Upload files or a project folder to start coding together.</h1>
+                  <p>Your shared file tree will appear here after uploading.</p>
                   <div className="empty-editor-actions">
+                    <button onClick={openFilePicker} type="button">
+                      <Upload size={16} />
+                      Upload Files
+                    </button>
                     <button onClick={openFolderPicker} type="button">
                       <FolderPlus size={16} />
-                      Upload Project Folder
+                      Upload Folder
                     </button>
                   </div>
                 </div>
@@ -1157,6 +1175,19 @@ export default function App() {
     ].slice(-60));
   }
 
+  function openFilePicker() {
+    const input = fileInputRef.current;
+    if (!input) {
+      return;
+    }
+
+    // Ensure webkitdirectory is NOT set for individual file selection
+    input.removeAttribute('webkitdirectory');
+    input.removeAttribute('directory');
+    input.value = '';
+    input.click();
+  }
+
   function openFolderPicker() {
     const input = folderInputRef.current;
     if (!input) {
@@ -1318,18 +1349,22 @@ export default function App() {
     expandForPath(markerPath);
   }
 
-  async function handleUploadInput(input: HTMLInputElement) {
+  async function handleUploadInput(input: HTMLInputElement, isFolder: boolean) {
     if (!input.files || input.files.length === 0) {
       return;
     }
 
-    const selectedFiles = Array.from(input.files);
-    const hasFolderPaths = selectedFiles.some((file) => Boolean((file as File & { webkitRelativePath?: string }).webkitRelativePath));
-    if (!hasFolderPaths) {
-      input.value = '';
-      setUploadNotice('Please choose a folder from the folder picker so PearProgramming can preserve the project structure.');
-      setSaveState('error');
-      return;
+    if (isFolder) {
+      // Folder picker: require webkitRelativePath so structure is preserved
+      const hasFolderPaths = Array.from(input.files).some(
+        (file) => Boolean((file as File & { webkitRelativePath?: string }).webkitRelativePath)
+      );
+      if (!hasFolderPaths) {
+        input.value = '';
+        setUploadNotice('Please choose a folder so PearProgramming can preserve the project structure.');
+        setSaveState('error');
+        return;
+      }
     }
 
     const uploadResult = await readUploadCandidates(input.files);

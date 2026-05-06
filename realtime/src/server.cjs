@@ -9,7 +9,7 @@ const { setupWSConnection, docs, getYDoc } = require('y-websocket/bin/utils');
 
 const loadedEnvFiles = loadEnvFiles();
 const PORT = numberFromEnv('PORT', 1235);
-const SNAPSHOT_ENDPOINT = process.env.SNAPSHOT_ENDPOINT || 'http://localhost:8081/internal/files';
+const SNAPSHOT_ENDPOINT = process.env.SNAPSHOT_ENDPOINT || '';
 const ROOM_CLEANUP_ENDPOINT = process.env.ROOM_CLEANUP_ENDPOINT || deriveRoomCleanupEndpoint(SNAPSHOT_ENDPOINT);
 const SNAPSHOT_INTERVAL_MS = numberFromEnv('SNAPSHOT_INTERVAL_MS', 30_000);
 const ROOM_TTL_SECONDS = numberFromEnv('ROOM_TTL_SECONDS', 24 * 60 * 60);

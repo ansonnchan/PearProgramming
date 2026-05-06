@@ -18,7 +18,7 @@ export type UploadReadResult = {
 };
 
 const MAX_UPLOAD_FILES = 1500;
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 500 * 1024;
 const ALLOWED_EXTENSIONS = new Set([
   'adoc',
   'astro',
@@ -239,7 +239,7 @@ function blockedReasonFor(file: File, path: string) {
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
-    return 'Files must be 5 MB or smaller.';
+    return 'Files must be 500 KB or smaller.';
   }
 
   if (BLOCKED_EXTENSIONS.has(extension)) {

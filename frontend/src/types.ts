@@ -91,12 +91,6 @@ export type Member = {
   ai?: boolean;
 };
 
-export type GitHubImportResponse = {
-  owner: string;
-  repo: string;
-  branch: string;
-  files: WorkspaceFile[];
-};
 
 export type ProjectSwitchEvent = {
   type: 'proposed' | 'vote' | 'accepted' | 'declined';
