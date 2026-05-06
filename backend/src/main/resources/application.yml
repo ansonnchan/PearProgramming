@@ -8,7 +8,13 @@ spring:
       password: ${SPRING_REDIS_PASSWORD:}
       ssl:
         enabled: ${SPRING_REDIS_SSL:false}
-      timeout: 750ms
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: 1000ms
 server:
   port: ${SERVER_PORT:${PORT:8081}}
 
