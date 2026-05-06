@@ -1044,7 +1044,7 @@ export default function App() {
       avatarUrl: entryProfileAvatar
     };
     setUser(updated);
-    localStorage.setItem('pearprogram-user', JSON.stringify(updated));
+    sessionStorage.setItem('pearprogram-user', JSON.stringify(updated));
     setEntryProfileOpen(false);
     setPendingRoomAction(null);
     setEntryProfileError('');
@@ -1762,7 +1762,7 @@ export default function App() {
       avatarUrl: profileDraftAvatar
     };
     setUser(updated);
-    localStorage.setItem('pearprogram-user', JSON.stringify(updated));
+    sessionStorage.setItem('pearprogram-user', JSON.stringify(updated));
     setProfileOpen(false);
 
     const currentRoom = roomRef.current;
@@ -2022,12 +2022,12 @@ function getJoinCode() {
 }
 
 function getOrCreateLocalUser(): Member {
-  const stored = localStorage.getItem('pearprogram-user');
+  const stored = sessionStorage.getItem('pearprogram-user');
   if (stored) {
     try {
       return JSON.parse(stored) as Member;
     } catch {
-      localStorage.removeItem('pearprogram-user');
+      sessionStorage.removeItem('pearprogram-user');
     }
   }
 
@@ -2037,7 +2037,7 @@ function getOrCreateLocalUser(): Member {
     name: 'You',
     color: DEFAULT_COLOR
   };
-  localStorage.setItem('pearprogram-user', JSON.stringify(user));
+  sessionStorage.setItem('pearprogram-user', JSON.stringify(user));
   return user;
 }
 
