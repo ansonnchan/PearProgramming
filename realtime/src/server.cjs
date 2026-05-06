@@ -9,10 +9,8 @@ const { setupWSConnection, docs, getYDoc } = require('y-websocket/bin/utils');
 
 const loadedEnvFiles = loadEnvFiles();
 const PORT = numberFromEnv('PORT', 1235);
-const SPRING_AUTH_URL = process.env.SPRING_AUTH_URL || 'http://localhost:8081/auth/validate';
 const SNAPSHOT_ENDPOINT = process.env.SNAPSHOT_ENDPOINT || 'http://localhost:8081/internal/files';
 const ROOM_CLEANUP_ENDPOINT = process.env.ROOM_CLEANUP_ENDPOINT || deriveRoomCleanupEndpoint(SNAPSHOT_ENDPOINT);
-const ALLOW_ANONYMOUS = (process.env.ALLOW_ANONYMOUS || 'true').toLowerCase() === 'true';
 const SNAPSHOT_INTERVAL_MS = numberFromEnv('SNAPSHOT_INTERVAL_MS', 30_000);
 const ROOM_TTL_SECONDS = numberFromEnv('ROOM_TTL_SECONDS', 24 * 60 * 60);
 const ROOM_CLEANUP_GRACE_MS = numberFromEnv('ROOM_CLEANUP_GRACE_MS', 20_000);
@@ -28,7 +26,6 @@ let redis = null;
 
 log('info', 'Realtime configuration loaded', {
   envFiles: loadedEnvFiles,
-  authUrl: sanitizeUrl(SPRING_AUTH_URL),
   snapshotEndpoint: sanitizeUrl(SNAPSHOT_ENDPOINT),
   roomCleanupEndpoint: sanitizeUrl(ROOM_CLEANUP_ENDPOINT),
   cleanupGraceMs: ROOM_CLEANUP_GRACE_MS
@@ -114,17 +111,10 @@ server.on('upgrade', async (req, socket, head) => {
     return;
   }
 
-  const auth = await validateRequest(req);
-  if (!auth.valid) {
-    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-    socket.destroy();
-    return;
-  }
-
   req.pearDocName = parsed.docName;
   req.pearRoomCode = parsed.roomCode;
   req.pearFileId = parsed.fileId;
-  req.pearUser = auth;
+  req.pearUser = { valid: true, userId: 'anonymous', displayName: 'Guest' };
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit('connection', ws, req);
@@ -167,39 +157,6 @@ function parseDocRequest(req) {
     fileId,
     docName: `${roomCode}:${fileId}`
   };
-}
-
-async function validateRequest(req) {
-  const authorization = extractAuthorization(req);
-  if (!authorization && ALLOW_ANONYMOUS) {
-    return { valid: true, userId: 'anonymous', displayName: 'Guest' };
-  }
-  if (!authorization) {
-    return { valid: false };
-  }
-
-  try {
-    const response = await fetch(SPRING_AUTH_URL, {
-      headers: { authorization },
-      signal: AbortSignal.timeout(2500)
-    });
-    if (!response.ok) {
-      return { valid: false };
-    }
-    return response.json();
-  } catch (error) {
-    log('warn', 'JWT validation request failed', { error: error.message });
-    return ALLOW_ANONYMOUS ? { valid: true, userId: 'anonymous', displayName: 'Guest' } : { valid: false };
-  }
-}
-
-function extractAuthorization(req) {
-  if (req.headers.authorization) {
-    return req.headers.authorization;
-  }
-  const url = new URL(req.url, 'http://localhost');
-  const token = url.searchParams.get('token');
-  return token ? `Bearer ${token}` : null;
 }
 
 async function hydrateDoc(doc, roomCode, fileId) {

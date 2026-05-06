@@ -19,14 +19,6 @@ export async function bootstrapDemoRoom(): Promise<BootstrapResponse> {
   return postJson<BootstrapResponse>('/api/bootstrap', {});
 }
 
-export async function issueDevToken(userId: string, displayName: string): Promise<string> {
-  const response = await postJson<{ token: string; tokenType: string }>('/auth/dev-token', {
-    userId,
-    displayName
-  });
-  return response.token;
-}
-
 export async function getRoom(code: string): Promise<Room> {
   return getJson<Room>(`/api/rooms/${encodeURIComponent(code)}`);
 }

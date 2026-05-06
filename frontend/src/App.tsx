@@ -31,7 +31,6 @@ import {
   dismissAnnotation,
   getRoom,
   getRoomAccess,
-  issueDevToken,
   listAnnotations,
   listChatHistory,
   listFiles,
@@ -115,7 +114,6 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState('Yjs offline');
   const [peerCount, setPeerCount] = useState(1);
   const [chatDraft, setChatDraft] = useState('');
-  const [authToken, setAuthToken] = useState<string | null>(null);
   const [cursorPosition, setCursorPosition] = useState({ line: 1, col: 1 });
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [landingCode, setLandingCode] = useState('');
@@ -350,21 +348,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    issueDevToken(user.id, user.name)
-      .then((token) => {
-        if (!cancelled) {
-          setAuthToken(token);
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user.id, user.name]);
-
-  useEffect(() => {
     if (!room) {
       return;
     }
@@ -413,7 +396,7 @@ export default function App() {
     }
 
     const client = new Client({
-      connectHeaders: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      connectHeaders: {},
       reconnectDelay: 2000,
       webSocketFactory: () => new SockJS(STOMP_URL),
       onConnect: () => {
@@ -479,7 +462,7 @@ export default function App() {
       setStompConnected(false);
       setStompClient(null);
     };
-  }, [authToken, room, user.avatarUrl, user.color, user.id, user.name]);
+  }, [room, user.avatarUrl, user.color, user.id, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -494,7 +477,7 @@ export default function App() {
     ydocRef.current?.destroy();
 
     const ydoc = new Y.Doc();
-    const provider = new WebsocketProvider(YJS_URL, `${currentRoom.code}/${currentFile.id}`, ydoc, authToken ? { params: { token: authToken } } : undefined);
+    const provider = new WebsocketProvider(YJS_URL, `${currentRoom.code}/${currentFile.id}`, ydoc);
     const yText = ydoc.getText('monaco');
 
     const model = editor.getModel();
@@ -543,7 +526,7 @@ export default function App() {
       provider.destroy();
       ydoc.destroy();
     };
-  }, [activeFile?.id, authToken, room?.code, user.color, user.name]);
+  }, [activeFile?.id, room?.code, user.color, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
