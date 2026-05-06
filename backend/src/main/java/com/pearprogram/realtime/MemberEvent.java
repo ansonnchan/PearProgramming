@@ -5,6 +5,8 @@ import java.time.OffsetDateTime;
 public record MemberEvent(
         String type,
         String userId,
+        String sessionId,
+        String connectionId,
         String displayName,
         String color,
         String avatarUrl,

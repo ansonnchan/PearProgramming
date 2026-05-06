@@ -18,7 +18,7 @@ import {
   WifiOff,
   X
 } from 'lucide-react';
-import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import SockJS from 'sockjs-client';
 import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
@@ -45,9 +45,11 @@ import pearLogoUrl from '../assets/favicon.png';
 import pearChibiUrl from '../assets/pear_chibi.jpg';
 import type { UploadCandidate, UploadReadResult } from './uploads';
 import { projectNameForPaths, readUploadCandidates } from './uploads';
-import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, WorkspaceFile } from './types';
+import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, RoomSessionState, WorkspaceFile } from './types';
 
 const DEFAULT_COLOR = '#000000';
+const ROOM_SESSION_STORAGE_KEY = 'pearprogram-room-session';
+const CONNECTION_SESSION_STORAGE_KEY = 'pearprogram-connection-session';
 
 const FALLBACK_ROOM: Room = {
   code: 'LOCAL1',
@@ -84,8 +86,10 @@ type PendingSwitch = {
 };
 
 type MemberRealtimeEvent = {
-  type: 'joined' | 'left' | 'presence-sync' | 'lead-sync' | 'lead-transferred' | 'lock-changed' | 'room-closed';
+  type: 'joined' | 'left' | 'presence-sync' | 'lead-sync' | 'lead-transferred' | 'lead-removed' | 'lock-changed' | 'room-closed';
   userId: string;
+  sessionId?: string;
+  connectionId?: string;
   displayName?: string;
   color?: string;
   avatarUrl?: string;
@@ -102,6 +106,14 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
 
 type PendingRoomAction = 'create' | 'join';
 
+type MentionOption = {
+  id: string;
+  name: string;
+  label: string;
+  color: string;
+  ai?: boolean;
+};
+
 export default function App() {
   const [room, setRoom] = useState<Room | null>(null);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
@@ -116,6 +128,9 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState('Yjs offline');
   const [peerCount, setPeerCount] = useState(1);
   const [chatDraft, setChatDraft] = useState('');
+  const [chatError, setChatError] = useState('');
+  const [mentionState, setMentionState] = useState({ open: false, query: '', start: 0, end: 0 });
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [cursorPosition, setCursorPosition] = useState({ line: 1, col: 1 });
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [landingCode, setLandingCode] = useState('');
@@ -144,7 +159,11 @@ export default function App() {
   const [entryProfileName, setEntryProfileName] = useState('');
   const [entryProfileAvatar, setEntryProfileAvatar] = useState<string | undefined>();
   const [entryProfileError, setEntryProfileError] = useState('');
+  const [createItemKind, setCreateItemKind] = useState<'file' | 'folder' | null>(null);
+  const [createItemName, setCreateItemName] = useState('');
+  const [createItemError, setCreateItemError] = useState('');
   const [user, setUser] = useState<Member>(() => getOrCreateLocalUser());
+  const [connectionId] = useState(() => getOrCreateConnectionId());
 
   const openFiles = openFileIds
     .map((fileId) => files.find((file) => file.id === fileId))
@@ -156,6 +175,10 @@ export default function App() {
     .map<Member>((cursor) => ({ id: cursor.userId, name: cursor.displayName, color: cursor.color }));
   const humanMembers = uniqueMembers([user, ...Object.values(presenceMembers), ...remoteMembers]);
   const members = uniqueMembers([...humanMembers, { id: 'ai', name: 'AI', color: '#8B5CF6', ai: true }]);
+  const mentionOptions = buildMentionOptions(members);
+  const filteredMentionOptions = mentionState.open
+    ? mentionOptions.filter((option) => mentionMatches(option, mentionState.query)).slice(0, 6)
+    : [];
   const isLeadPear = leadUserId === user.id;
   const roleLabel = isLeadPear ? 'Lead Pear' : 'Junior Pear';
   const delegateCandidates = humanMembers.filter((member) => member.id !== user.id);
@@ -171,17 +194,27 @@ export default function App() {
   const saveTimerRef = useRef<number | null>(null);
   const suppressEditorChangeRef = useRef(false);
   const pendingUploadRef = useRef<{ proposalId: string; candidates: UploadCandidate[]; newFolder: string; openUploaded: boolean } | null>(null);
+  const pendingUploadSyncRef = useRef<ProjectSwitchEvent[]>([]);
   const committingProposalRef = useRef<string | null>(null);
   const roomRef = useRef<Room | null>(null);
   const filesRef = useRef<WorkspaceFile[]>([]);
+  const openFileIdsRef = useRef<string[]>([]);
+  const activeFileIdRef = useRef<string | null>(null);
   const activeFileRef = useRef<WorkspaceFile | null>(null);
   const stompRef = useRef<Client | null>(null);
+  const userRef = useRef<Member>(user);
+  const mentionOptionsRef = useRef<MentionOption[]>([]);
   const leadUserIdRef = useRef<string | null>(null);
+  const roomLockedRef = useRef(false);
   const toastTimerRef = useRef<number | null>(null);
+  const heartbeatTimerRef = useRef<number | null>(null);
+  const seedingFileIdsRef = useRef<Set<string>>(new Set());
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const chatInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const entryAvatarInputRef = useRef<HTMLInputElement | null>(null);
+  const bootstrappedRoomRef = useRef(false);
 
   const handleJoinRoom = useCallback(async (rawCode: string, displayName?: string, replaceUrl = true) => {
     const code = normalizeRoomCode(rawCode);
@@ -194,17 +227,19 @@ export default function App() {
     setLandingError('');
     setLandingNotice('');
     try {
-      const access = await getRoomAccess(code, displayName || user.name);
+      const access = await getRoomAccess(code, user.id, displayName || user.name);
       if (!access.canJoin) {
         if (access.reason === 'locked') {
           showToast('Room is Locked. Contact the room owner if this is a mistake.');
+        } else if (access.reason === 'not_found') {
+          setLandingError(`Room ${code} has expired or was closed.`);
         } else {
           setLandingError('Room is Full.');
         }
         setJoiningRoom(false);
         return;
       }
-      await apiJoinRoom(code, displayName);
+      await apiJoinRoom(code, user.id, displayName);
       const joinedRoom = await getRoom(code);
       openRoom(joinedRoom, [], replaceUrl);
     } catch (error) {
@@ -215,7 +250,7 @@ export default function App() {
     } finally {
       setJoiningRoom(false);
     }
-  }, [user.id]);
+  }, [user.id, user.name]);
 
   const handleCreateRoom = useCallback(async () => {
     setCreatingRoom(true);
@@ -327,12 +362,32 @@ export default function App() {
   }, [activeFile]);
 
   useEffect(() => {
+    activeFileIdRef.current = activeFileId;
+  }, [activeFileId]);
+
+  useEffect(() => {
+    openFileIdsRef.current = openFileIds;
+  }, [openFileIds]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    mentionOptionsRef.current = mentionOptions;
+  }, [mentionOptions]);
+
+  useEffect(() => {
     stompRef.current = stompClient;
   }, [stompClient]);
 
   useEffect(() => {
     leadUserIdRef.current = leadUserId;
   }, [leadUserId]);
+
+  useEffect(() => {
+    roomLockedRef.current = roomLocked;
+  }, [roomLocked]);
 
   useEffect(() => {
     if (folderInputRef.current) {
@@ -346,13 +401,59 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (bootstrappedRoomRef.current) {
+      return;
+    }
+    bootstrappedRoomRef.current = true;
+
     const joinCode = getJoinCode();
+    const savedSession = loadRoomSession();
+    if (savedSession?.room?.code && (!joinCode || normalizeRoomCode(joinCode) === savedSession.room.code)) {
+      void (async () => {
+        try {
+          const freshRoom = await getRoom(savedSession.room.code);
+          openRoom(freshRoom, savedSession.files, false, savedSession);
+        } catch {
+          clearRoomSession();
+          if (joinCode) {
+            const normalized = normalizeRoomCode(joinCode);
+            setLandingCode(normalized);
+            requestRoomEntry('join', normalized);
+          } else {
+            returnToLanding('The room expired.');
+          }
+        }
+      })();
+      return;
+    }
+
     if (joinCode) {
       const code = normalizeRoomCode(joinCode);
       setLandingCode(code);
       requestRoomEntry('join', code);
     }
   }, []);
+
+  useEffect(() => {
+    if (!room) {
+      return;
+    }
+
+    persistRoomSession({
+      room,
+      files,
+      openFileIds,
+      activeFileId,
+      expandedFolderPaths: [...expandedFolders],
+      cursorPosition,
+      roomLocked,
+      leadUserId,
+      chatOpen,
+      explorerOpen,
+      landingCode,
+      chatDraft
+    });
+  }, [activeFileId, chatDraft, chatOpen, cursorPosition, expandedFolders, explorerOpen, files, landingCode, leadUserId, openFileIds, room, roomLocked]);
 
   useEffect(() => {
     if (!room) {
@@ -411,9 +512,15 @@ export default function App() {
       reconnectDelay: 2000,
       webSocketFactory: () => new SockJS(STOMP_URL),
       onConnect: () => {
+        const currentUser = userRef.current;
         setStompConnected(true);
         client.subscribe(`/topic/room/${room.code}/chat`, (message: IMessage) => {
-          setMessages((current) => [...current, JSON.parse(message.body) as ChatMessage].slice(-60));
+          const chatMessage = JSON.parse(message.body) as ChatMessage;
+          const activeUser = userRef.current;
+          if (chatMessage.userId !== activeUser.id && messageMentionsUser(chatMessage.content, activeUser, mentionOptionsRef.current)) {
+            showToast(`${displayNameOrPear(chatMessage.displayName)} mentioned you`);
+          }
+          setMessages((current) => [...current, chatMessage].slice(-60));
         });
         client.subscribe(`/topic/room/${room.code}/cursors`, (message: IMessage) => {
           const cursor = JSON.parse(message.body) as CursorMessage;
@@ -436,15 +543,43 @@ export default function App() {
           destination: `/app/room/${room.code}/members`,
           body: JSON.stringify({
             type: 'joined',
-            userId: user.id,
-            displayName: user.name,
-            color: DEFAULT_COLOR,
-            avatarUrl: user.avatarUrl,
+            userId: currentUser.id,
+            sessionId: currentUser.id,
+            connectionId,
+            displayName: currentUser.name,
+            color: currentUser.color,
+            avatarUrl: currentUser.avatarUrl,
             leadUserId: leadUserIdRef.current,
-            locked: roomLocked,
+            locked: roomLockedRef.current,
             at: new Date().toISOString()
           })
         });
+        if (heartbeatTimerRef.current) {
+          window.clearInterval(heartbeatTimerRef.current);
+        }
+        heartbeatTimerRef.current = window.setInterval(() => {
+          if (!client.connected) {
+            return;
+          }
+
+          client.publish({
+            destination: `/app/room/${room.code}/members`,
+            body: JSON.stringify({
+              type: 'presence-sync',
+              userId: userRef.current.id,
+              sessionId: userRef.current.id,
+              connectionId,
+              displayName: userRef.current.name,
+              color: userRef.current.color,
+              avatarUrl: userRef.current.avatarUrl,
+              leadUserId: leadUserIdRef.current,
+              locked: roomLockedRef.current,
+              targetUserId: userRef.current.id,
+              at: new Date().toISOString()
+            })
+          });
+        }, 25_000);
+        flushPendingUploadSyncs(client);
       },
       onWebSocketClose: () => setStompConnected(false),
       onStompError: () => setStompConnected(false)
@@ -454,17 +589,24 @@ export default function App() {
     setStompClient(client);
 
     return () => {
+      if (heartbeatTimerRef.current) {
+        window.clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
       if (client.connected) {
+        const currentUser = userRef.current;
         client.publish({
           destination: `/app/room/${room.code}/members`,
           body: JSON.stringify({
             type: 'left',
-            userId: user.id,
-            displayName: user.name,
-            color: DEFAULT_COLOR,
-            avatarUrl: user.avatarUrl,
+            userId: currentUser.id,
+            sessionId: currentUser.id,
+            connectionId,
+            displayName: currentUser.name,
+            color: currentUser.color,
+            avatarUrl: currentUser.avatarUrl,
             leadUserId: leadUserIdRef.current,
-            locked: roomLocked,
+            locked: roomLockedRef.current,
             at: new Date().toISOString()
           })
         });
@@ -473,7 +615,37 @@ export default function App() {
       setStompConnected(false);
       setStompClient(null);
     };
-  }, [room, user.avatarUrl, user.id, user.name]);
+  }, [connectionId, room]);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      const currentRoom = roomRef.current;
+      const client = stompRef.current;
+      const currentUser = userRef.current;
+      if (!currentRoom || !client?.connected) {
+        return;
+      }
+
+      client.publish({
+        destination: `/app/room/${currentRoom.code}/members`,
+        body: JSON.stringify({
+          type: 'left',
+          userId: currentUser.id,
+          sessionId: currentUser.id,
+          connectionId,
+          displayName: currentUser.name,
+          color: currentUser.color,
+          avatarUrl: currentUser.avatarUrl,
+          leadUserId: leadUserIdRef.current,
+          locked: roomLockedRef.current,
+          at: new Date().toISOString()
+        })
+      });
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    return () => window.removeEventListener('pagehide', handlePageHide);
+  }, [connectionId]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -499,6 +671,7 @@ export default function App() {
     }
 
     const shouldSeedLocalText = currentRoom.code === FALLBACK_ROOM.code || !isUuid(currentFile.id);
+    const canSeedSyncedText = currentFile.createdById === user.id && !seedingFileIdsRef.current.has(currentFile.id);
     if (shouldSeedLocalText && yText.length === 0 && currentFile.content) {
       yText.insert(0, currentFile.content);
     }
@@ -514,7 +687,7 @@ export default function App() {
     });
     let seededAfterSync = false;
     const seedEmptySyncedDoc = (synced: boolean) => {
-      if (!synced || seededAfterSync || shouldSeedLocalText || yText.length > 0 || !currentFile.content) {
+      if (!synced || seededAfterSync || shouldSeedLocalText || !canSeedSyncedText || yText.length > 0 || !currentFile.content) {
         return;
       }
       seededAfterSync = true;
@@ -537,7 +710,7 @@ export default function App() {
       provider.destroy();
       ydoc.destroy();
     };
-  }, [activeFile?.id, room?.code, user.color, user.name]);
+  }, [activeFile?.id, room?.code, user.color, user.id, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -865,7 +1038,7 @@ export default function App() {
             </div>
             <div className="messages">
               {messages.map((message) => (
-                <article className={`message ${message.ai ? 'message-ai' : ''} ${message.system ? 'message-system' : ''}`} key={message.id}>
+                <article className={`message ${message.ai ? 'message-ai' : ''} ${message.system ? 'message-system' : ''} ${messageMentionsUser(message.content, user, mentionOptions) ? 'message-mentioned' : ''}`} key={message.id}>
                   {message.system ? (
                     <p>{message.content}</p>
                   ) : (
@@ -874,26 +1047,61 @@ export default function App() {
                         <span>{message.displayName}</span>
                         <span>{formatPacificTime(message.createdAt)}</span>
                       </div>
-                      <p>{message.content}</p>
+                      <p>{renderMessageContent(message.content, mentionOptions, insertMentionIntoDraft)}</p>
                     </>
                   )}
                 </article>
               ))}
             </div>
+            <div className="chat-input-shell">
+              {filteredMentionOptions.length > 0 && (
+                <div className="mention-menu" role="listbox">
+                  {filteredMentionOptions.map((option, index) => (
+                    <button
+                      aria-selected={index === mentionActiveIndex}
+                      className={`mention-option ${index === mentionActiveIndex ? 'mention-option-active' : ''}`}
+                      key={option.id}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        insertMentionIntoDraft(option);
+                      }}
+                      role="option"
+                      type="button"
+                    >
+                      <span className={`mention-avatar ${option.ai ? 'mention-avatar-ai' : ''}`} style={{ backgroundColor: `${option.color}22`, color: option.color }}>
+                        {option.ai ? <Bot size={12} /> : initials(option.name)}
+                      </span>
+                      <span>@{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {chatError && <p className="chat-error">{chatError}</p>}
             <div className="chat-input">
               <input
-                onChange={(event) => setChatDraft(event.target.value)}
+                onChange={(event) => {
+                  setChatDraft(event.target.value);
+                  setChatError('');
+                  updateMentionState(event.currentTarget);
+                }}
                 onKeyDown={(event) => {
+                  if (handleMentionKeyDown(event)) {
+                    return;
+                  }
                   if (event.key === 'Enter') {
                     sendChat();
                   }
                 }}
+                onClick={(event) => updateMentionState(event.currentTarget)}
+                onKeyUp={(event) => updateMentionState(event.currentTarget)}
                 placeholder="Message or @AI..."
+                ref={chatInputRef}
                 value={chatDraft}
               />
               <button className="send-button" onClick={sendChat} title="Send message" type="button">
                 <Send size={16} />
               </button>
+            </div>
             </div>
           </aside>
         ) : (
@@ -995,6 +1203,16 @@ export default function App() {
           </section>
         </div>
       )}
+      {createItemKind && (
+        <CreateItemModal
+          error={createItemError}
+          kind={createItemKind}
+          name={createItemName}
+          onCancel={closeCreateItemModal}
+          onConfirm={confirmCreateItem}
+          onNameChange={setCreateItemName}
+        />
+      )}
       <Toast message={toastMessage} />
     </main>
   );
@@ -1051,6 +1269,7 @@ export default function App() {
       name: displayName,
       avatarUrl: entryProfileAvatar
     };
+    userRef.current = updated;
     setUser(updated);
     sessionStorage.setItem('pearprogram-user', JSON.stringify(updated));
     setEntryProfileOpen(false);
@@ -1067,14 +1286,19 @@ export default function App() {
     }
   }
 
-  function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean) {
+  function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean, restoredState?: RoomSessionState) {
     const sortedFiles = nextFiles.sort(sortByPath);
-    const firstFileId = sortedFiles[0]?.id ?? null;
+    const restoredOpenFileIds = restoredState?.openFileIds ?? [];
+    const nextOpenFileIds = restoredOpenFileIds.filter((fileId) => sortedFiles.some((file) => file.id === fileId));
+    const fallbackOpenFileId = sortedFiles[0]?.id ?? null;
+    const nextActiveFileId = restoredState?.activeFileId && sortedFiles.some((file) => file.id === restoredState.activeFileId)
+      ? restoredState.activeFileId
+      : nextOpenFileIds[0] ?? fallbackOpenFileId;
     setRoom(nextRoom);
     setFiles(sortedFiles);
-    setOpenFileIds(firstFileId ? [firstFileId] : []);
-    setActiveFileId(firstFileId);
-    setExpandedFolders(foldersForPaths(sortedFiles.map((file) => file.path)));
+    setOpenFileIds(nextOpenFileIds.length > 0 ? nextOpenFileIds : nextActiveFileId ? [nextActiveFileId] : []);
+    setActiveFileId(nextActiveFileId);
+    setExpandedFolders(restoredState ? new Set(restoredState.expandedFolderPaths) : foldersForPaths(sortedFiles.map((file) => file.path)));
     setMessages([]);
     setAnnotations([]);
     setCursors({});
@@ -1082,12 +1306,15 @@ export default function App() {
     setLeadUserId(nextRoom.leadUserId);
     setRoomLocked(nextRoom.locked);
     setPearMenuOpen(false);
-    setExplorerOpen(true);
-    setChatOpen(true);
+    setExplorerOpen(restoredState?.explorerOpen ?? true);
+    setChatOpen(restoredState?.chatOpen ?? true);
     setDelegateOpen(false);
     setDelegateUserId('');
     setUploadNotice('');
+    setLandingCode(restoredState?.landingCode ?? nextRoom.code);
     setLandingNotice('');
+    setChatDraft(restoredState?.chatDraft ?? '');
+    setCursorPosition(restoredState?.cursorPosition ?? { line: 1, col: 1 });
     setSaveState(sortedFiles.length > 0 ? 'saved' : 'idle');
     setLastSavedAt(null);
     if (replaceUrl) {
@@ -1101,6 +1328,14 @@ export default function App() {
       return;
     }
 
+    const invalidMentions = invalidMentionLabels(content, mentionOptions);
+    if (invalidMentions.length > 0) {
+      setChatError(`Unknown username: @${invalidMentions[0]}`);
+      return;
+    }
+
+    setMentionState((current) => ({ ...current, open: false }));
+    setChatError('');
     if (stompClient?.connected) {
       stompClient.publish({
         destination: `/app/room/${room.code}/chat`,
@@ -1144,6 +1379,70 @@ export default function App() {
     }
 
     setChatDraft('');
+  }
+
+  function updateMentionState(input: HTMLInputElement) {
+    const cursor = input.selectionStart ?? input.value.length;
+    const fragment = mentionFragmentAt(input.value, cursor);
+    if (!fragment) {
+      setMentionState((current) => ({ ...current, open: false, query: '', start: cursor, end: cursor }));
+      setMentionActiveIndex(0);
+      return;
+    }
+
+    setMentionState({ open: true, query: fragment.query, start: fragment.start, end: cursor });
+    setMentionActiveIndex(0);
+  }
+
+  function handleMentionKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (!mentionState.open || filteredMentionOptions.length === 0) {
+      return false;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setMentionActiveIndex((current) => (current + 1) % filteredMentionOptions.length);
+      return true;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setMentionActiveIndex((current) => (current - 1 + filteredMentionOptions.length) % filteredMentionOptions.length);
+      return true;
+    }
+
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault();
+      insertMentionIntoDraft(filteredMentionOptions[Math.min(mentionActiveIndex, filteredMentionOptions.length - 1)]);
+      return true;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setMentionState((current) => ({ ...current, open: false }));
+      return true;
+    }
+
+    return false;
+  }
+
+  function insertMentionIntoDraft(option: MentionOption) {
+    const input = chatInputRef.current;
+    const start = mentionState.open ? mentionState.start : chatDraft.length;
+    const end = mentionState.open ? mentionState.end : chatDraft.length;
+    const prefix = chatDraft.slice(0, start);
+    const suffix = chatDraft.slice(end);
+    const needsLeadingSpace = prefix.length > 0 && !/\s$/.test(prefix);
+    const nextPrefix = `${prefix}${needsLeadingSpace ? ' ' : ''}@${option.label} `;
+    const nextDraft = `${nextPrefix}${suffix.replace(/^\s+/, '')}`;
+    const nextCursor = nextPrefix.length;
+    setChatDraft(nextDraft);
+    setChatError('');
+    setMentionState({ open: false, query: '', start: nextCursor, end: nextCursor });
+    window.setTimeout(() => {
+      input?.focus();
+      input?.setSelectionRange(nextCursor, nextCursor);
+    }, 0);
   }
 
   function copyRoomCode() {
@@ -1246,6 +1545,7 @@ export default function App() {
     setLandingCode('');
     setLandingError('');
     setLandingNotice(notice);
+    clearRoomSession();
     window.history.replaceState(null, '', '/');
   }
 
@@ -1264,6 +1564,8 @@ export default function App() {
     publishMemberEvent({
       type: 'room-closed',
       userId: user.id,
+      sessionId: user.id,
+      connectionId,
       displayName: user.name,
       color: user.color,
       avatarUrl: user.avatarUrl,
@@ -1281,6 +1583,8 @@ export default function App() {
     publishMemberEvent({
       type: 'room-closed',
       userId: user.id,
+      sessionId: user.id,
+      connectionId,
       displayName: user.name,
       color: DEFAULT_COLOR,
       avatarUrl: user.avatarUrl,
@@ -1300,6 +1604,8 @@ export default function App() {
     publishMemberEvent({
       type: 'lock-changed',
       userId: user.id,
+      sessionId: user.id,
+      connectionId,
       displayName: user.name,
       color: DEFAULT_COLOR,
       avatarUrl: user.avatarUrl,
@@ -1318,6 +1624,8 @@ export default function App() {
     publishMemberEvent({
       type: 'lead-transferred',
       userId: user.id,
+      sessionId: user.id,
+      connectionId,
       displayName: user.name,
       color: DEFAULT_COLOR,
       avatarUrl: user.avatarUrl,
@@ -1330,31 +1638,63 @@ export default function App() {
   }
 
   async function handleNewFile() {
-    const currentRoom = roomRef.current;
-    if (!currentRoom) {
-      return;
-    }
-
-    const path = uniqueFilePath(files.map((file) => file.path), 'new-file', 'txt');
-    const workspaceId = crypto.randomUUID(); // Generate a temporary workspace ID for local files
-    const local = createLocalFile(path, workspaceId);
-    setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
-    openFileTab(local.id);
-    expandForPath(path);
+    openCreateItemModal('file');
   }
 
   async function handleNewFolder() {
-    const currentRoom = roomRef.current;
-    if (!currentRoom) {
+    openCreateItemModal('folder');
+  }
+
+  function openCreateItemModal(kind: 'file' | 'folder') {
+    setCreateItemKind(kind);
+    setCreateItemName(kind === 'file' ? 'new-file' : 'new-folder');
+    setCreateItemError('');
+  }
+
+  function closeCreateItemModal() {
+    setCreateItemKind(null);
+    setCreateItemName('');
+    setCreateItemError('');
+  }
+
+  function confirmCreateItem() {
+    const currentKind = createItemKind;
+    const name = createItemName.trim();
+    const existingPaths = files.map((file) => file.path);
+
+    if (!currentKind) {
       return;
     }
 
-    const folderPath = uniqueFolderPath(files.map((file) => file.path), 'new-folder');
-    const markerPath = `${folderPath}/.gitkeep`;
-    const workspaceId = crypto.randomUUID(); // Generate a temporary workspace ID for local files
-    const local = createLocalFile(markerPath, workspaceId);
-    setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
-    expandForPath(markerPath);
+    const target = resolveCreateItemTarget(currentKind, name, existingPaths);
+    if ('error' in target && target.error) {
+      setCreateItemError(target.error);
+      return;
+    }
+
+    setCreateItemError('');
+    const resolvedPath = target.path;
+    if (!resolvedPath) {
+      setCreateItemError('Name is required.');
+      return;
+    }
+
+    if (currentKind === 'file') {
+      const workspaceId = crypto.randomUUID();
+      const local = createLocalFile(resolvedPath, workspaceId, user.id);
+      applyUploadedFiles([local], false, true);
+      queueOrPublishProjectSwitch(createFileTreeEvent([local], false, false));
+      openFileTab(local.id);
+      expandForPath(resolvedPath);
+    } else {
+      const workspaceId = crypto.randomUUID();
+      const local = createLocalFile(`${resolvedPath}/.gitkeep`, workspaceId, user.id);
+      applyUploadedFiles([local], false, false);
+      queueOrPublishProjectSwitch(createFileTreeEvent([local], false, false));
+      expandForPath(resolvedPath);
+    }
+
+    closeCreateItemModal();
   }
 
   async function handleUploadInput(input: HTMLInputElement, isFolder: boolean) {
@@ -1399,7 +1739,7 @@ export default function App() {
         requiredUserIds,
         approvedUserIds: []
       };
-      pendingUploadRef.current = { proposalId, candidates, newFolder, openUploaded: false };
+      pendingUploadRef.current = { proposalId, candidates, newFolder, openUploaded: true };
       setPendingSwitch(proposal);
       publishProjectSwitch({
         type: 'proposed',
@@ -1409,19 +1749,25 @@ export default function App() {
       return;
     }
 
-    void persistUploadCandidates(candidates, isSwitch, false).then((localFiles) => {
-      if (stompRef.current?.connected && localFiles.length > 0) {
-        publishProjectSwitch({
-          type: 'accepted',
-          proposalId: crypto.randomUUID(),
-          currentFolder: activeProjectName,
-          newFolder,
-          proposerId: user.id,
-          proposerName: user.name,
-          files: localFiles,
-          at: new Date().toISOString()
-        });
+    void persistUploadCandidates(candidates, isSwitch, true).then((localFiles) => {
+      if (localFiles.length === 0) {
+        return;
       }
+
+      const acceptedEvent: ProjectSwitchEvent = {
+        type: 'accepted',
+        proposalId: crypto.randomUUID(),
+        currentFolder: activeProjectName,
+        newFolder,
+        proposerId: user.id,
+        proposerName: user.name,
+        files: localFiles,
+        replaceExisting: isSwitch,
+        openUploaded: true,
+        at: new Date().toISOString()
+      };
+
+      queueOrPublishProjectSwitch(acceptedEvent);
     });
   }
 
@@ -1434,8 +1780,9 @@ export default function App() {
     setSaveState('offline');
     // Files are no longer persisted to the server; create local file objects
     const workspaceId = crypto.randomUUID(); // Generate a temporary workspace ID
-    const local = candidates.map((candidate) => createLocalFileFromCandidate(candidate, workspaceId));
+    const local = candidates.map((candidate) => createLocalFileFromCandidate(candidate, workspaceId, user.id));
     applyUploadedFiles(local, replaceExisting, openUploaded);
+    void seedYjsDocuments(local);
     setLastSavedAt(new Date().toISOString());
     return local;
   }
@@ -1445,7 +1792,7 @@ export default function App() {
       const next = (replaceExisting ? uploaded : mergeFiles(current, uploaded)).sort(sortByPath);
       const nextFileIds = new Set(next.map((file) => file.id));
       const uploadedIds = uploaded.map((file) => file.id).filter((fileId) => nextFileIds.has(fileId));
-      const retainedOpenIds = openFileIds.filter((fileId) => nextFileIds.has(fileId));
+      const retainedOpenIds = openFileIdsRef.current.filter((fileId) => nextFileIds.has(fileId));
       const nextOpenIds = openUploaded
         ? replaceExisting
           ? uploadedIds
@@ -1454,12 +1801,64 @@ export default function App() {
           ? []
           : retainedOpenIds;
       const fallbackOpenIds = openUploaded && nextOpenIds.length === 0 && next[0] ? [next[0].id] : nextOpenIds;
-      setOpenFileIds(fallbackOpenIds);
-      setActiveFileId(openUploaded
+      const nextActiveId = openUploaded
         ? uploadedIds[0] ?? fallbackOpenIds[0] ?? null
-        : fallbackOpenIds.includes(activeFileId ?? '') ? activeFileId : null);
+        : fallbackOpenIds.includes(activeFileIdRef.current ?? '') ? activeFileIdRef.current : null;
+      filesRef.current = next;
+      openFileIdsRef.current = fallbackOpenIds;
+      activeFileIdRef.current = nextActiveId;
+      setOpenFileIds(fallbackOpenIds);
+      setActiveFileId(nextActiveId);
       setExpandedFolders(foldersForPaths(next.map((file) => file.path)));
       return next;
+    });
+  }
+
+  async function seedYjsDocuments(uploaded: WorkspaceFile[]) {
+    const currentRoom = roomRef.current;
+    if (!currentRoom || currentRoom.code === FALLBACK_ROOM.code || !YJS_URL) {
+      return;
+    }
+
+    const filesToSeed = uploaded.filter((file) => isUuid(file.id) && file.content.length > 0);
+    for (let index = 0; index < filesToSeed.length; index += 8) {
+      const batch = filesToSeed.slice(index, index + 8);
+      await Promise.all(batch.map((file) => seedYjsDocument(currentRoom.code, file)));
+    }
+  }
+
+  function seedYjsDocument(roomCode: string, file: WorkspaceFile) {
+    seedingFileIdsRef.current.add(file.id);
+    return new Promise<void>((resolve) => {
+      const ydoc = new Y.Doc();
+      const provider = new WebsocketProvider(YJS_URL, `${roomCode}/${file.id}`, ydoc);
+      const yText = ydoc.getText('monaco');
+      let finished = false;
+
+      const cleanup = () => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        provider.off('sync', seedWhenSynced);
+        provider.destroy();
+        ydoc.destroy();
+        seedingFileIdsRef.current.delete(file.id);
+        resolve();
+      };
+
+      const seedWhenSynced = (synced: boolean) => {
+        if (!synced) {
+          return;
+        }
+        if (yText.length === 0) {
+          yText.insert(0, file.content);
+        }
+        window.setTimeout(cleanup, 150);
+      };
+
+      provider.on('sync', seedWhenSynced);
+      window.setTimeout(cleanup, 4000);
     });
   }
 
@@ -1498,14 +1897,14 @@ export default function App() {
 
     if (event.type === 'sync') {
       if (event.targetUserId === user.id && event.files?.length) {
-        applyUploadedFiles(event.files, true, false);
+        applyUploadedFiles(event.files, event.replaceExisting ?? true, event.openUploaded ?? false);
       }
       return;
     }
 
     if (event.type === 'accepted') {
-      if (event.files?.length) {
-        applyUploadedFiles(event.files, true, false);
+      if (event.files?.length && event.proposerId !== user.id) {
+        applyUploadedFiles(event.files, event.replaceExisting ?? true, event.openUploaded ?? false);
       }
       pendingUploadRef.current = null;
       committingProposalRef.current = null;
@@ -1577,6 +1976,8 @@ export default function App() {
           ...proposal,
           approvedUserIds: proposal.requiredUserIds,
           files: uploaded,
+          replaceExisting: true,
+          openUploaded: upload.openUploaded,
           at: new Date().toISOString()
         });
       })
@@ -1606,6 +2007,51 @@ export default function App() {
       destination: `/app/room/${currentRoom.code}/project-switch`,
       body: JSON.stringify(event)
     });
+  }
+
+  function queueOrPublishProjectSwitch(event: ProjectSwitchEvent) {
+    if (stompRef.current?.connected) {
+      publishProjectSwitch(event);
+      return;
+    }
+
+    pendingUploadSyncRef.current.push(event);
+  }
+
+  function createFileTreeEvent(nextFiles: WorkspaceFile[], replaceExisting: boolean, openUploaded: boolean): ProjectSwitchEvent {
+    const projectName = nextFiles.length > 0 ? projectNameForPaths(nextFiles.map((file) => file.path)) : activeProjectName;
+    return {
+      type: 'accepted',
+      proposalId: crypto.randomUUID(),
+      currentFolder: activeProjectName,
+      newFolder: projectName,
+      proposerId: user.id,
+      proposerName: user.name,
+      files: nextFiles,
+      replaceExisting,
+      openUploaded,
+      at: new Date().toISOString()
+    };
+  }
+
+  function flushPendingUploadSyncs(client = stompRef.current) {
+    if (!client?.connected) {
+      return;
+    }
+
+    const currentRoom = roomRef.current;
+    if (!currentRoom || pendingUploadSyncRef.current.length === 0) {
+      return;
+    }
+
+    const pendingEvents = [...pendingUploadSyncRef.current];
+    pendingUploadSyncRef.current = [];
+    for (const event of pendingEvents) {
+      client.publish({
+        destination: `/app/room/${currentRoom.code}/project-switch`,
+        body: JSON.stringify(event)
+      });
+    }
   }
 
   function publishMemberEvent(event: MemberRealtimeEvent) {
@@ -1638,18 +2084,33 @@ export default function App() {
       setRoomLocked(event.locked);
     }
 
-    if (event.type === 'lead-transferred' || event.type === 'lead-sync') {
+    if (event.type === 'lead-transferred' || event.type === 'lead-sync' || event.type === 'lead-removed') {
+      if (event.type === 'lead-removed') {
+        setLeadUserId(null);
+        addSystemMessage(`${displayNameOrPear(event.displayName)} removed ${displayNameOrPear(event.targetUserName)} from Lead Pear`);
+        return;
+      }
       if (!event.targetUserId || event.targetUserId === user.id || event.type === 'lead-transferred') {
         setLeadUserId(event.leadUserId ?? event.targetUserId ?? event.userId);
+      }
+      if (event.type === 'lead-transferred') {
+        addSystemMessage(`${displayNameOrPear(event.displayName)} designated ${displayNameOrPear(event.targetUserName)} as Lead Pear`);
+        if (event.targetUserName) {
+          addSystemMessage(`${displayNameOrPear(event.targetUserName)} is now the Lead Pear`);
+        }
       }
       return;
     }
 
     if (event.type === 'lock-changed') {
+      addSystemMessage(event.locked ? `${displayNameOrPear(event.displayName)} has locked the room` : `${displayNameOrPear(event.displayName)} has unlocked the room`);
       return;
     }
 
     if (event.type === 'left') {
+      if (event.leadUserId) {
+        setLeadUserId(event.leadUserId);
+      }
       if (event.userId !== user.id) {
         addSystemMessage(`${displayNameOrPear(event.displayName)} has left the room`);
       }
@@ -1670,7 +2131,7 @@ export default function App() {
       setLeadUserId(event.leadUserId);
     }
 
-    if (event.userId !== user.id && (event.type === 'joined' || (event.type === 'presence-sync' && event.targetUserId === user.id))) {
+    if (event.userId !== user.id && (event.type === 'joined' || event.type === 'presence-sync')) {
       setPresenceMembers((current) => ({
         ...current,
         [event.userId]: {
@@ -1694,28 +2155,33 @@ export default function App() {
         body: JSON.stringify({
           type: 'presence-sync',
           userId: user.id,
+          sessionId: user.id,
+          connectionId,
           displayName: user.name,
           color: user.color,
           avatarUrl: user.avatarUrl,
           leadUserId: leadUserIdRef.current,
-          locked: roomLocked,
+          locked: roomLockedRef.current,
           targetUserId: event.userId,
           at: new Date().toISOString()
         })
       });
 
       if (leadUserIdRef.current === user.id && filesRef.current.length > 0) {
+        const projectName = filesRef.current.length > 0 ? projectNameForPaths(filesRef.current.map((file) => file.path)) : activeProjectName;
         client.publish({
           destination: `/app/room/${currentRoom.code}/project-switch`,
           body: JSON.stringify({
             type: 'sync',
             proposalId: crypto.randomUUID(),
-            currentFolder: activeProjectName,
-            newFolder: activeProjectName,
+            currentFolder: projectName,
+            newFolder: projectName,
             proposerId: user.id,
             proposerName: user.name,
             targetUserId: event.userId,
             files: filesRef.current,
+            replaceExisting: true,
+            openUploaded: false,
             at: new Date().toISOString()
           })
         });
@@ -1727,11 +2193,13 @@ export default function App() {
           body: JSON.stringify({
             type: 'lead-sync',
             userId: user.id,
+            sessionId: user.id,
+            connectionId,
             displayName: user.name,
             color: user.color,
             avatarUrl: user.avatarUrl,
             leadUserId: user.id,
-            locked: roomLocked,
+            locked: roomLockedRef.current,
             targetUserId: event.userId,
             at: new Date().toISOString()
           })
@@ -1806,6 +2274,7 @@ export default function App() {
       name: profileDraftName.trim() || 'You',
       avatarUrl: profileDraftAvatar
     };
+    userRef.current = updated;
     setUser(updated);
     sessionStorage.setItem('pearprogram-user', JSON.stringify(updated));
     setProfileOpen(false);
@@ -1818,11 +2287,13 @@ export default function App() {
         body: JSON.stringify({
           type: 'joined',
           userId: updated.id,
+          sessionId: updated.id,
+          connectionId,
           displayName: updated.name,
           color: updated.color,
           avatarUrl: updated.avatarUrl,
           leadUserId: leadUserIdRef.current,
-          locked: roomLocked,
+          locked: roomLockedRef.current,
           at: new Date().toISOString()
         })
       });
@@ -1969,6 +2440,75 @@ function EntryProfileModal({
   );
 }
 
+function CreateItemModal({
+  error,
+  kind,
+  name,
+  onCancel,
+  onConfirm,
+  onNameChange
+}: {
+  error: string;
+  kind: 'file' | 'folder';
+  name: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onNameChange: (value: string) => void;
+}) {
+  const isFolder = kind === 'folder';
+
+  return (
+    <div className="modal-backdrop modal-backdrop-animated" onKeyDown={(event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCancel();
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        onConfirm();
+      }
+    }} role="presentation">
+      <section className="confirm-modal create-item-modal" aria-describedby="create-item-help" aria-label={isFolder ? 'Create folder' : 'Create file'} aria-modal="true" role="dialog">
+        <header>
+          <h2>{isFolder ? 'Create Folder' : 'Create File'}</h2>
+          <button className="icon-button" onClick={onCancel} title="Cancel" type="button">
+            <X size={14} />
+          </button>
+        </header>
+        <p id="create-item-help">
+          {isFolder
+            ? 'Enter a folder name. PearProgramming will create the folder and preserve its structure.'
+            : 'Enter a file name. You can include an extension like .ts or .md.'}
+        </p>
+        <label className="field-label">
+          {isFolder ? 'Folder name' : 'File name'}
+          <input
+            autoFocus
+            onChange={(event) => onNameChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                onConfirm();
+              }
+            }}
+            placeholder={isFolder ? 'components' : 'notes.md'}
+            value={name}
+          />
+        </label>
+        {error && <p className="profile-error">{error}</p>}
+        <div className="create-item-preview">
+          <span className="create-item-chip">{isFolder ? 'Folder' : 'File'}</span>
+          <span className="create-item-hint">Duplicate names are auto-renamed to keep the tree stable.</span>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onCancel} type="button">Cancel</button>
+          <button className="primary-button" onClick={onConfirm} type="button">Create</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function TreeRow({
   node,
   activeFileId,
@@ -2086,6 +2626,184 @@ function getOrCreateLocalUser(): Member {
   return user;
 }
 
+function getOrCreateConnectionId() {
+  const stored = sessionStorage.getItem(CONNECTION_SESSION_STORAGE_KEY);
+  if (stored) {
+    return stored;
+  }
+
+  const id = crypto.randomUUID();
+  sessionStorage.setItem(CONNECTION_SESSION_STORAGE_KEY, id);
+  return id;
+}
+
+function loadRoomSession(): RoomSessionState | null {
+  const stored = sessionStorage.getItem(ROOM_SESSION_STORAGE_KEY);
+  if (!stored) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(stored) as RoomSessionState;
+    if (!parsed.room || !parsed.room.code) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    sessionStorage.removeItem(ROOM_SESSION_STORAGE_KEY);
+    return null;
+  }
+}
+
+function persistRoomSession(state: RoomSessionState) {
+  sessionStorage.setItem(ROOM_SESSION_STORAGE_KEY, JSON.stringify(state));
+}
+
+function clearRoomSession() {
+  sessionStorage.removeItem(ROOM_SESSION_STORAGE_KEY);
+}
+
+function resolveCreateItemTarget(kind: 'file' | 'folder', rawName: string, existingPaths: string[]) {
+  if (!rawName) {
+    return { error: `${kind === 'folder' ? 'Folder' : 'File'} name is required.` };
+  }
+
+  if (/[\\/]/.test(rawName)) {
+    return { error: 'Use a single name without path separators.' };
+  }
+
+  if (kind === 'folder') {
+    const path = uniqueFolderPath(existingPaths, rawName);
+    return { path };
+  }
+
+  const { baseName, extension } = splitFileName(rawName);
+  const path = uniqueFilePath(existingPaths, baseName || 'new-file', extension || 'txt');
+  return { path };
+}
+
+function splitFileName(value: string) {
+  const trimmed = value.trim();
+  const lastDot = trimmed.lastIndexOf('.');
+  if (lastDot <= 0 || lastDot === trimmed.length - 1) {
+    return { baseName: trimmed, extension: '' };
+  }
+
+  return {
+    baseName: trimmed.slice(0, lastDot),
+    extension: trimmed.slice(lastDot + 1)
+  };
+}
+
+function buildMentionOptions(members: Member[]): MentionOption[] {
+  const baseCounts = new Map<string, number>();
+  for (const member of members) {
+    const base = mentionBaseLabel(member);
+    baseCounts.set(base, (baseCounts.get(base) ?? 0) + 1);
+  }
+
+  return members.map((member) => {
+    const base = mentionBaseLabel(member);
+    return {
+      id: member.id,
+      name: member.name,
+      label: baseCounts.get(base) === 1 ? base : `${base}-${member.id.slice(0, 4)}`,
+      color: member.color,
+      ai: member.ai
+    };
+  });
+}
+
+function mentionBaseLabel(member: Member) {
+  if (member.ai) {
+    return 'AI';
+  }
+
+  const normalized = member.name
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Za-z0-9_-]/g, '');
+  return normalized || `user-${member.id.slice(0, 4)}`;
+}
+
+function mentionMatches(option: MentionOption, query: string) {
+  const normalizedQuery = query.toLowerCase();
+  return option.label.toLowerCase().includes(normalizedQuery) || option.name.toLowerCase().includes(normalizedQuery);
+}
+
+function mentionFragmentAt(value: string, cursor: number) {
+  const prefix = value.slice(0, cursor);
+  const match = prefix.match(/(^|\s)@([A-Za-z0-9_-]*)$/);
+  if (!match) {
+    return null;
+  }
+
+  const query = match[2] ?? '';
+  return {
+    query,
+    start: cursor - query.length - 1
+  };
+}
+
+function invalidMentionLabels(content: string, options: MentionOption[]) {
+  const validLabels = new Set(options.map((option) => option.label.toLowerCase()));
+  const invalid: string[] = [];
+  for (const match of content.matchAll(/(^|\s)@([A-Za-z0-9_-]+)/g)) {
+    const label = match[2];
+    if (!validLabels.has(label.toLowerCase())) {
+      invalid.push(label);
+    }
+  }
+  return invalid;
+}
+
+function messageMentionsUser(content: string, user: Member, options: MentionOption[]) {
+  const userOption = options.find((option) => option.id === user.id);
+  if (!userOption) {
+    return false;
+  }
+
+  for (const match of content.matchAll(/(^|\s)@([A-Za-z0-9_-]+)/g)) {
+    if (match[2].toLowerCase() === userOption.label.toLowerCase()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function renderMessageContent(content: string, options: MentionOption[], onMentionClick: (option: MentionOption) => void) {
+  const nodes = [];
+  let lastIndex = 0;
+  for (const match of content.matchAll(/(^|\s)@([A-Za-z0-9_-]+)/g)) {
+    const matchIndex = match.index ?? 0;
+    const leading = match[1] ?? '';
+    const label = match[2];
+    const mentionIndex = matchIndex + leading.length;
+    if (mentionIndex > lastIndex) {
+      nodes.push(content.slice(lastIndex, mentionIndex));
+    }
+
+    const option = options.find((item) => item.label.toLowerCase() === label.toLowerCase());
+    if (option) {
+      nodes.push(
+        <button className="mention-token" key={`${label}-${mentionIndex}`} onClick={() => onMentionClick(option)} type="button">
+          @{option.label}
+        </button>
+      );
+    } else {
+      nodes.push(`@${label}`);
+    }
+    lastIndex = mentionIndex + label.length + 1;
+  }
+
+  if (lastIndex < content.length) {
+    nodes.push(content.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
 function uniqueMembers(members: Member[]) {
   const byId = new Map<string, Member>();
   for (const member of members) {
@@ -2137,7 +2855,7 @@ function createLocalAnnotation(fileId: string, line: number, userName: string, r
   };
 }
 
-function createLocalFile(path: string, workspaceId: string): WorkspaceFile {
+function createLocalFile(path: string, workspaceId: string, createdById?: string): WorkspaceFile {
   return {
     id: crypto.randomUUID(),
     workspaceId,
@@ -2145,11 +2863,12 @@ function createLocalFile(path: string, workspaceId: string): WorkspaceFile {
     language: inferLanguage(path),
     content: '',
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    createdById
   };
 }
 
-function createLocalFileFromCandidate(candidate: UploadCandidate, workspaceId: string): WorkspaceFile {
+function createLocalFileFromCandidate(candidate: UploadCandidate, workspaceId: string, createdById?: string): WorkspaceFile {
   return {
     id: crypto.randomUUID(),
     workspaceId,
@@ -2157,7 +2876,8 @@ function createLocalFileFromCandidate(candidate: UploadCandidate, workspaceId: s
     language: candidate.language,
     content: candidate.content,
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    createdById
   };
 }
 

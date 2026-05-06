@@ -23,8 +23,8 @@ export async function getRoom(code: string): Promise<Room> {
   return getJson<Room>(`/api/rooms/${encodeURIComponent(code)}`);
 }
 
-export async function getRoomAccess(code: string, displayName: string): Promise<RoomAccess> {
-  return getJson<RoomAccess>(`/api/rooms/${encodeURIComponent(code)}/access?displayName=${encodeURIComponent(displayName)}`);
+export async function getRoomAccess(code: string, sessionId: string, displayName: string): Promise<RoomAccess> {
+  return getJson<RoomAccess>(`/api/rooms/${encodeURIComponent(code)}/access?sessionId=${encodeURIComponent(sessionId)}&displayName=${encodeURIComponent(displayName)}`);
 }
 
 export async function createWorkspace(name: string): Promise<Workspace> {
@@ -35,8 +35,8 @@ export async function createRoom(): Promise<RoomCreateResponse> {
   return postJson<RoomCreateResponse>('/api/rooms/create', {});
 }
 
-export async function joinRoom(code: string, displayName?: string): Promise<RoomJoinResponse> {
-  return postJson<RoomJoinResponse>('/api/rooms/join', { code, displayName });
+export async function joinRoom(code: string, sessionId: string, displayName?: string): Promise<RoomJoinResponse> {
+  return postJson<RoomJoinResponse>('/api/rooms/join', { code, sessionId, displayName });
 }
 
 export async function listFiles(workspaceId: string): Promise<WorkspaceFile[]> {

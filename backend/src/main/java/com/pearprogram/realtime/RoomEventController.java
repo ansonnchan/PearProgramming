@@ -90,33 +90,65 @@ public class RoomEventController {
     @MessageMapping("/room/{code}/members")
     public void member(@DestinationVariable String code, MemberEvent event) {
         MemberEvent outbound = event;
+        MemberEvent followUp = null;
         if ("joined".equals(event.type())) {
-            roomStateService.joinRoom(code, event.displayName(), event.color());
-            RoomAccessDto access = roomStateService.roomAccess(code, event.displayName());
+            roomStateService.joinRoom(code, event.sessionId(), event.connectionId(), event.displayName(), event.color());
+            RoomAccessDto access = roomStateService.roomAccess(code, event.sessionId(), event.displayName());
             if (access.leadUserId() == null || access.leadUserId().isBlank()) {
                 access = roomStateService.transferLead(code, event.userId());
             }
             outbound = withRoomState(event, access);
             roomService.cancelCleanup(code);
+        } else if ("presence-sync".equals(event.type())) {
+            roomStateService.joinRoom(code, event.sessionId(), event.connectionId(), event.displayName(), event.color());
+            outbound = withRoomState(event, roomStateService.roomAccess(code, event.sessionId(), event.displayName()));
         } else if ("left".equals(event.type())) {
-            RoomAccessDto state = roomStateService.leaveRoom(code, event.displayName());
+            String previousLeadUserId = roomStateService.getLeadUserId(code);
+            RoomAccessDto state = roomStateService.leaveRoom(code, event.sessionId(), event.connectionId(), event.displayName());
             outbound = withRoomState(event, state);
             if (state.memberCount() == 0) {
                 roomService.scheduleCleanupIfEmpty(code);
+            } else if (event.userId() != null && event.userId().equals(previousLeadUserId)) {
+                java.util.Optional<EphemeralRoomStateService.ActiveMember> nextLead =
+                        roomStateService.firstActiveMemberExcept(code, event.userId());
+                if (nextLead.isPresent()) {
+                    EphemeralRoomStateService.ActiveMember candidate = nextLead.get();
+                    RoomAccessDto transferred = roomStateService.transferLead(code, candidate.userId());
+                    outbound = withRoomState(event, transferred);
+                    followUp = withRoomState(new MemberEvent(
+                            "lead-transferred",
+                            event.userId(),
+                            event.sessionId(),
+                            event.connectionId(),
+                            event.displayName(),
+                            event.color(),
+                            event.avatarUrl(),
+                            candidate.userId(),
+                            candidate.userId(),
+                            candidate.displayName(),
+                            transferred.locked(),
+                            event.at()
+                    ), transferred);
+                }
             }
         } else if ("lead-transferred".equals(event.type())) {
             String nextLead = event.leadUserId() == null || event.leadUserId().isBlank()
                     ? event.targetUserId()
                     : event.leadUserId();
             outbound = withRoomState(event, roomStateService.transferLead(code, nextLead));
+        } else if ("lead-removed".equals(event.type())) {
+            outbound = withRoomState(event, roomStateService.transferLead(code, null));
         } else if ("lock-changed".equals(event.type()) && event.locked() != null) {
-            outbound = withRoomState(event, roomStateService.setLocked(code, event.displayName(), event.locked()));
+            outbound = withRoomState(event, roomStateService.setLocked(code, event.userId(), event.locked()));
         } else if ("room-closed".equals(event.type())) {
             roomService.closeRoom(code);
         } else {
-            outbound = withRoomState(event, roomStateService.roomAccess(code, event.displayName()));
+            outbound = withRoomState(event, roomStateService.roomAccess(code, event.sessionId(), event.displayName()));
         }
         messagingTemplate.convertAndSend("/topic/room/" + code + "/members", outbound);
+        if (followUp != null) {
+            messagingTemplate.convertAndSend("/topic/room/" + code + "/members", followUp);
+        }
     }
 
     @MessageMapping("/room/{code}/project-switch")
@@ -173,6 +205,8 @@ public class RoomEventController {
         return new MemberEvent(
                 event.type(),
                 event.userId(),
+                event.sessionId(),
+                event.connectionId(),
                 event.displayName(),
                 event.color(),
                 event.avatarUrl(),

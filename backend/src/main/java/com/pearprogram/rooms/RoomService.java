@@ -9,9 +9,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-//import java.time.Duration;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Locale;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -19,17 +20,17 @@ public class RoomService {
     private static final Logger log = LoggerFactory.getLogger(RoomService.class);
     private final RoomCodeGenerator roomCodeGenerator;
     private final EphemeralRoomStateService roomStateService;
-   // private final Duration roomTtl;
-    private final Set<String> pendingCleanup = ConcurrentHashMap.newKeySet();
+    private final Duration cleanupGrace;
+    private final Map<String, Instant> pendingCleanup = new ConcurrentHashMap<>();
 
     public RoomService(
             RoomCodeGenerator roomCodeGenerator,
             EphemeralRoomStateService roomStateService,
-            @Value("${pearprogram.rooms.ttl-hours:24}") long ttlHours
+            @Value("${pearprogram.rooms.cleanup-grace-seconds:120}") long cleanupGraceSeconds
     ) {
         this.roomCodeGenerator = roomCodeGenerator;
         this.roomStateService = roomStateService;
-        //this.roomTtl = Duration.ofHours(ttlHours);
+        this.cleanupGrace = Duration.ofSeconds(Math.max(30, cleanupGraceSeconds));
     }
 
     public RoomCreateResponse createRoom() {
@@ -50,10 +51,10 @@ public class RoomService {
         return roomStateService.getRoomSummary(normalized, buildJoinUrl(normalized));
     }
 
-    public RoomAccessDto getRoomAccess(String code, String userId) {
+    public RoomAccessDto getRoomAccess(String code, String sessionId, String displayName) {
         String normalized = normalizeRoomCode(code);
         ensureRoomExists(normalized);
-        return roomStateService.roomAccess(normalized, userId);
+        return roomStateService.roomAccess(normalized, sessionId, displayName);
     }
 
     public RoomJoinResponse joinRoom(String code) {
@@ -62,15 +63,22 @@ public class RoomService {
         return roomStateService.joinRoom(normalized);
     }
 
-    public RoomJoinResponse joinRoom(String code, String displayName) {
+    public RoomJoinResponse joinRoom(String code, String sessionId) {
         String normalized = normalizeRoomCode(code);
         ensureRoomExists(normalized);
-        return roomStateService.joinRoom(normalized, displayName, null);
+        return roomStateService.joinRoom(normalized, sessionId, null, null);
+    }
+
+    public RoomJoinResponse joinRoom(String code, String sessionId, String displayName) {
+        String normalized = normalizeRoomCode(code);
+        ensureRoomExists(normalized);
+        return roomStateService.joinRoom(normalized, sessionId, displayName, null);
     }
 
     public void cancelCleanup(String code) {
         String normalized = normalizeRoomCode(code);
-        if (pendingCleanup.remove(normalized)) {
+        if (pendingCleanup.remove(normalized) != null) {
+            roomStateService.markRoomActive(normalized);
             log.info("Cancelled pending room cleanup for {}", normalized);
         }
     }
@@ -81,8 +89,12 @@ public class RoomService {
             return;
         }
 
-        pendingCleanup.add(normalized);
-        log.info("Scheduled room cleanup for {}", normalized);
+        roomStateService.markRoomInactive(normalized);
+        pendingCleanup.computeIfAbsent(normalized, ignored -> {
+            Instant cleanupAt = Instant.now().plus(cleanupGrace);
+            log.info("Scheduled room cleanup for {} at {}", normalized, cleanupAt);
+            return cleanupAt;
+        });
     }
 
     public RoomCleanupDto cleanupIfEmpty(String code) {
@@ -94,7 +106,14 @@ public class RoomService {
 
         if (roomStateService.activeMemberCount(normalized) > 0) {
             pendingCleanup.remove(normalized);
+            roomStateService.markRoomActive(normalized);
             return new RoomCleanupDto(normalized, false, "active_members");
+        }
+
+        Instant cleanupAt = pendingCleanup.computeIfAbsent(normalized, ignored -> Instant.now().plus(cleanupGrace));
+        roomStateService.markRoomInactive(normalized);
+        if (Instant.now().isBefore(cleanupAt)) {
+            return new RoomCleanupDto(normalized, false, "pending");
         }
 
         roomStateService.deleteRoom(normalized);
@@ -118,8 +137,12 @@ public class RoomService {
 
     @Scheduled(fixedDelayString = "${pearprogram.rooms.cleanup-scan-ms:5000}")
     void runPendingCleanup() {
-        for (String code : Set.copyOf(pendingCleanup)) {
-            cleanupIfEmpty(code);
+        Instant now = Instant.now();
+        for (Map.Entry<String, Instant> entry : Map.copyOf(pendingCleanup).entrySet()) {
+            if (now.isBefore(entry.getValue())) {
+                continue;
+            }
+            cleanupIfEmpty(entry.getKey());
         }
     }
 

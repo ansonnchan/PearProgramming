@@ -2,5 +2,5 @@ package com.pearprogram.rooms;
 
 import jakarta.validation.constraints.NotBlank;
 
-public record JoinRoomRequest(@NotBlank String code, String displayName) {
+public record JoinRoomRequest(@NotBlank String code, @NotBlank String sessionId, String displayName) {
 }

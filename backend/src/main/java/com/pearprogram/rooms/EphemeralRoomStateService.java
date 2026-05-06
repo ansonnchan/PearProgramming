@@ -3,14 +3,21 @@ package com.pearprogram.rooms;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -19,6 +26,9 @@ import java.util.function.Supplier;
 public class EphemeralRoomStateService {
     private static final Logger log = LoggerFactory.getLogger(EphemeralRoomStateService.class);
     private static final int MAX_ROOM_USERS = 5;
+    private static final String DEFAULT_COLOR = "#378ADD";
+    private static final Duration MEMBER_STALE_TTL = Duration.ofMinutes(3);
+    private static final Duration RECENT_MEMBER_TTL = Duration.ofMinutes(5);
     private static final List<String> COLORS = List.of(
             "#378ADD",
             "#1D9E75",
@@ -30,12 +40,17 @@ public class EphemeralRoomStateService {
 
     private final StringRedisTemplate redisTemplate;
     private final Duration roomStateTtl;
+    private final Duration emptyRoomGrace;
     private final Map<String, LocalRoomState> localRooms = new ConcurrentHashMap<>();
     private volatile boolean redisAvailable = true;
 
-    public EphemeralRoomStateService(StringRedisTemplate redisTemplate) {
+    public EphemeralRoomStateService(
+            StringRedisTemplate redisTemplate,
+            @Value("${pearprogram.rooms.cleanup-grace-seconds:120}") long cleanupGraceSeconds
+    ) {
         this.redisTemplate = redisTemplate;
         this.roomStateTtl = Duration.ofHours(24);
+        this.emptyRoomGrace = Duration.ofSeconds(Math.max(30, cleanupGraceSeconds));
     }
 
     public boolean reserveRoomCode(String code) {
@@ -50,10 +65,14 @@ public class EphemeralRoomStateService {
                 () -> {
                     redisTemplate.opsForHash().put(roomMetaKey(code), "createdAt", createdAt.toString());
                     redisTemplate.opsForHash().put(roomMetaKey(code), "active", "true");
+                    redisTemplate.opsForHash().put(roomMetaKey(code), "locked", "false");
+                    redisTemplate.opsForHash().delete(roomMetaKey(code), "leadUserId", "leadDisplayName", "vacantSince");
                     redisTemplate.delete(roomMembersKey(code));
+                    redisTemplate.delete(roomRecentMembersKey(code));
                     redisTemplate.delete(roomAnnotationsKey(code));
-                    redisTemplate.opsForValue().setIfAbsent(roomCountKey(code), "0");
-                    redisTemplate.opsForValue().setIfAbsent(roomColorCursorKey(code), "0");
+                    redisTemplate.opsForValue().set(roomCountKey(code), "0", roomStateTtl);
+                    redisTemplate.opsForValue().set(roomColorCursorKey(code), "0", roomStateTtl);
+                    expireRoomKeys(code);
                     return null;
                 },
                 () -> {
@@ -61,8 +80,10 @@ public class EphemeralRoomStateService {
                     state.createdAt = createdAt;
                     state.active = true;
                     state.locked = false;
-                    state.leadDisplayName = null;
+                    state.leadUserId = null;
+                    state.vacantSince = null;
                     state.members.clear();
+                    state.recentMembers.clear();
                     state.annotations.clear();
                     state.memberCount.set(0);
                     state.colorCursor.set(0);
@@ -81,20 +102,13 @@ public class EphemeralRoomStateService {
 
     public int activeMemberCount(String code) {
         return executeWithFallback(
-                () -> {
-                    String raw = redisTemplate.opsForValue().get(roomCountKey(code));
-                    if (raw == null || raw.isBlank()) {
-                        return 0;
-                    }
-                    try {
-                        return Integer.parseInt(raw);
-                    } catch (NumberFormatException ex) {
-                        return 0;
-                    }
-                },
+                () -> pruneExpiredRedisMembers(code, false),
                 () -> {
                     LocalRoomState state = localRooms.get(code);
-                    return state == null ? 0 : state.memberCount.get();
+                    if (state == null) {
+                        return 0;
+                    }
+                    return pruneExpiredLocalMembers(code, state, false);
                 }
         );
     }
@@ -104,21 +118,33 @@ public class EphemeralRoomStateService {
                 code,
                 code,
                 joinUrl,
-                roomExists(code),
+                roomExists(code) && isActive(code),
                 roomCreatedAt(code),
                 activeMemberCount(code),
                 MAX_ROOM_USERS,
                 isLocked(code),
-                getLeadDisplayName(code)
+                getLeadUserId(code)
         );
     }
 
     public RoomAccessDto roomAccess(String code, String displayName) {
+        return roomAccess(code, displayName, displayName);
+    }
+
+    public RoomAccessDto roomAccess(String code, String sessionId, String displayName) {
+        if (!roomExists(code)) {
+            return new RoomAccessDto(false, "not_found", false, 0, MAX_ROOM_USERS, null);
+        }
+
+        String userId = normalizeSessionId(sessionId);
         boolean locked = isLocked(code);
         int memberCount = activeMemberCount(code);
-        boolean isMember = displayName != null && !displayName.isBlank() && memberExists(code, normalizeIdentity(displayName, code));
-        boolean canJoin = roomExists(code) && !locked && (isMember || memberCount < MAX_ROOM_USERS);
-        return new RoomAccessDto(canJoin, canJoin ? null : locked ? "locked" : "full", locked, memberCount, MAX_ROOM_USERS, getLeadDisplayName(code));
+        boolean isMember = !userId.isBlank() && activeUserExists(code, userId);
+        boolean wasRecentMember = !userId.isBlank() && recentUserExists(code, userId);
+        boolean hasCapacity = memberCount < MAX_ROOM_USERS;
+        boolean canJoin = isMember || (wasRecentMember && hasCapacity) || (!locked && hasCapacity);
+        String reason = canJoin ? null : locked ? "locked" : "full";
+        return new RoomAccessDto(canJoin, reason, locked, memberCount, MAX_ROOM_USERS, getLeadUserId(code));
     }
 
     public RoomJoinResponse joinRoom(String code) {
@@ -126,115 +152,95 @@ public class EphemeralRoomStateService {
             throw new IllegalArgumentException("Room not found");
         }
 
-        RoomAccessDto access = roomAccess(code, null);
+        RoomAccessDto access = roomAccess(code, null, null);
         if (!access.canJoin()) {
             throw new IllegalStateException(access.reason() == null ? "Room unavailable" : access.reason());
         }
 
+        String sessionId = java.util.UUID.randomUUID().toString();
         String displayName = allocateDisplayName(code);
         String cursorColor = nextCursorColor(code);
-        executeWithFallback(
-                () -> {
-                    redisTemplate.opsForHash().put(roomMembersKey(code), displayName, cursorColor);
-                    redisTemplate.opsForValue().increment(roomCountKey(code));
-                    redisTemplate.expire(roomCountKey(code), roomStateTtl);
-                    redisTemplate.expire(roomMembersKey(code), roomStateTtl);
-                    redisTemplate.expire(roomAnnotationsKey(code), roomStateTtl);
-                    return null;
-                },
-                () -> {
-                    LocalRoomState state = localState(code);
-                    state.members.put(displayName, cursorColor);
-                    state.memberCount.incrementAndGet();
-                    return null;
-                }
-        );
-        log.info("Joined room {} as {} ({})", code, displayName, cursorColor);
-        return new RoomJoinResponse(code, displayName, cursorColor, activeMemberCount(code), MAX_ROOM_USERS);
+        return joinRoom(code, sessionId, sessionId, displayName, cursorColor);
     }
 
-    public RoomJoinResponse joinRoom(String code, String displayName, String cursorColor) {
-        String normalized = normalizeIdentity(displayName, code);
-        String color = cursorColor == null || cursorColor.isBlank() ? nextCursorColor(code) : cursorColor;
+    public RoomJoinResponse joinRoom(String code, String sessionId, String displayName, String cursorColor) {
+        return joinRoom(code, sessionId, sessionId, displayName, cursorColor);
+    }
+
+    public RoomJoinResponse joinRoom(String code, String sessionId, String connectionId, String displayName, String cursorColor) {
         if (!roomExists(code)) {
             throw new IllegalArgumentException("Room not found");
         }
 
-        executeWithFallback(
-                () -> {
-                    Object existing = redisTemplate.opsForHash().get(roomMembersKey(code), normalized);
-                    if (existing == null) {
-                        redisTemplate.opsForHash().put(roomMembersKey(code), normalized, color);
-                        redisTemplate.opsForValue().increment(roomCountKey(code));
-                    }
-                    redisTemplate.expire(roomCountKey(code), roomStateTtl);
-                    redisTemplate.expire(roomMembersKey(code), roomStateTtl);
-                    redisTemplate.expire(roomAnnotationsKey(code), roomStateTtl);
-                    return null;
-                },
-                () -> {
-                    LocalRoomState state = localState(code);
-                    if (state.members.putIfAbsent(normalized, color) == null) {
-                        state.memberCount.incrementAndGet();
-                    }
-                    return null;
-                }
-        );
-        return new RoomJoinResponse(code, normalized, color, activeMemberCount(code), MAX_ROOM_USERS);
+        String normalizedUserId = normalizeSessionId(sessionId);
+        if (normalizedUserId.isBlank()) {
+            normalizedUserId = java.util.UUID.randomUUID().toString();
+        }
+
+        RoomAccessDto access = roomAccess(code, normalizedUserId, displayName);
+        if (!access.canJoin() && !activeUserExists(code, normalizedUserId)) {
+            throw new IllegalStateException(access.reason() == null ? "Room unavailable" : access.reason());
+        }
+
+        String presenceId = normalizePresenceId(connectionId, normalizedUserId);
+        String normalizedDisplayName = normalizeIdentity(displayName, code);
+        String normalizedColor = cursorColor == null || cursorColor.isBlank() ? nextCursorColor(code) : cursorColor;
+        upsertPresence(code, presenceId, normalizedUserId, normalizedDisplayName, normalizedColor);
+        markRoomActive(code);
+        log.info("Joined room {} as {} ({})", code, normalizedDisplayName, normalizedColor);
+        return new RoomJoinResponse(code, normalizedDisplayName, normalizedColor, activeMemberCount(code), MAX_ROOM_USERS);
     }
 
     public RoomAccessDto leaveRoom(String code, String displayName) {
+        return leaveRoom(code, displayName, displayName, displayName);
+    }
+
+    public RoomAccessDto leaveRoom(String code, String sessionId, String displayName) {
+        return leaveRoom(code, sessionId, sessionId, displayName);
+    }
+
+    public RoomAccessDto leaveRoom(String code, String sessionId, String connectionId, String displayName) {
         if (!roomExists(code)) {
             return new RoomAccessDto(false, "not_found", false, 0, MAX_ROOM_USERS, null);
         }
 
-        if (displayName != null && !displayName.isBlank()) {
-            executeWithFallback(
-                    () -> {
-                        redisTemplate.opsForHash().delete(roomMembersKey(code), displayName);
-                        redisTemplate.opsForValue().decrement(roomCountKey(code));
-                        return null;
-                    },
-                    () -> {
-                        LocalRoomState state = localRooms.get(code);
-                        if (state != null && state.members.remove(displayName) != null) {
-                            state.memberCount.updateAndGet(value -> Math.max(value - 1, 0));
-                        }
-                        return null;
-                    }
-            );
+        String userId = normalizeSessionId(sessionId);
+        String presenceId = normalizePresenceId(connectionId, userId);
+        if (!presenceId.isBlank()) {
+            removePresence(code, presenceId);
         }
 
         int memberCount = Math.max(activeMemberCount(code), 0);
         if (memberCount <= 0) {
-            deleteRoom(code);
-            return new RoomAccessDto(false, "closed", false, 0, MAX_ROOM_USERS, null);
+            markRoomInactive(code);
+            return new RoomAccessDto(false, "closed", isLocked(code), 0, MAX_ROOM_USERS, getLeadUserId(code));
         }
 
-        return new RoomAccessDto(true, null, isLocked(code), memberCount, MAX_ROOM_USERS, getLeadDisplayName(code));
+        return new RoomAccessDto(true, null, isLocked(code), memberCount, MAX_ROOM_USERS, getLeadUserId(code));
     }
 
-    public RoomAccessDto transferLead(String code, String leadDisplayName) {
+    public RoomAccessDto transferLead(String code, String leadUserId) {
         if (!roomExists(code)) {
             return new RoomAccessDto(false, "not_found", false, 0, MAX_ROOM_USERS, null);
         }
 
+        String normalizedLeadUserId = leadUserId == null || leadUserId.isBlank() ? null : leadUserId.trim();
         executeWithFallback(
                 () -> {
-                    if (leadDisplayName == null || leadDisplayName.isBlank()) {
-                        redisTemplate.opsForHash().delete(roomMetaKey(code), "leadDisplayName");
+                    if (normalizedLeadUserId == null) {
+                        redisTemplate.opsForHash().delete(roomMetaKey(code), "leadUserId");
                     } else {
-                        redisTemplate.opsForHash().put(roomMetaKey(code), "leadDisplayName", leadDisplayName);
+                        redisTemplate.opsForHash().put(roomMetaKey(code), "leadUserId", normalizedLeadUserId);
                     }
+                    expireRoomKeys(code);
                     return null;
                 },
                 () -> {
-                    LocalRoomState state = localState(code);
-                    state.leadDisplayName = leadDisplayName == null || leadDisplayName.isBlank() ? null : leadDisplayName;
+                    localState(code).leadUserId = normalizedLeadUserId;
                     return null;
                 }
         );
-        return new RoomAccessDto(true, null, isLocked(code), activeMemberCount(code), MAX_ROOM_USERS, getLeadDisplayName(code));
+        return new RoomAccessDto(true, null, isLocked(code), activeMemberCount(code), MAX_ROOM_USERS, getLeadUserId(code));
     }
 
     public RoomAccessDto setLocked(String code, String ignoredUserId, boolean locked) {
@@ -245,6 +251,7 @@ public class EphemeralRoomStateService {
         executeWithFallback(
                 () -> {
                     redisTemplate.opsForHash().put(roomMetaKey(code), "locked", Boolean.toString(locked));
+                    expireRoomKeys(code);
                     return null;
                 },
                 () -> {
@@ -252,13 +259,53 @@ public class EphemeralRoomStateService {
                     return null;
                 }
         );
-        return new RoomAccessDto(true, null, locked, activeMemberCount(code), MAX_ROOM_USERS, getLeadDisplayName(code));
+        return new RoomAccessDto(true, null, locked, activeMemberCount(code), MAX_ROOM_USERS, getLeadUserId(code));
+    }
+
+    public void markRoomInactive(String code) {
+        String now = OffsetDateTime.now().toString();
+        executeWithFallback(
+                () -> {
+                    redisTemplate.opsForHash().put(roomMetaKey(code), "active", "false");
+                    redisTemplate.opsForHash().putIfAbsent(roomMetaKey(code), "vacantSince", now);
+                    expireRoomKeys(code);
+                    return null;
+                },
+                () -> {
+                    LocalRoomState state = localRooms.get(code);
+                    if (state != null) {
+                        state.active = false;
+                        if (state.vacantSince == null) {
+                            state.vacantSince = OffsetDateTime.parse(now);
+                        }
+                    }
+                    return null;
+                }
+        );
+    }
+
+    public void markRoomActive(String code) {
+        executeWithFallback(
+                () -> {
+                    redisTemplate.opsForHash().put(roomMetaKey(code), "active", "true");
+                    redisTemplate.opsForHash().delete(roomMetaKey(code), "vacantSince");
+                    expireRoomKeys(code);
+                    return null;
+                },
+                () -> {
+                    LocalRoomState state = localState(code);
+                    state.active = true;
+                    state.vacantSince = null;
+                    return null;
+                }
+        );
     }
 
     public void clearRuntimeState(String code) {
         executeWithFallback(
                 () -> {
                     redisTemplate.delete(roomMembersKey(code));
+                    redisTemplate.delete(roomRecentMembersKey(code));
                     redisTemplate.delete(roomCountKey(code));
                     redisTemplate.delete(roomMetaKey(code));
                     redisTemplate.delete(roomAnnotationsKey(code));
@@ -289,22 +336,87 @@ public class EphemeralRoomStateService {
         );
     }
 
-    public String getLeadDisplayName(String code) {
+    public boolean isActive(String code) {
         return executeWithFallback(
                 () -> {
-                    Object lead = redisTemplate.opsForHash().get(roomMetaKey(code), "leadDisplayName");
+                    Object active = redisTemplate.opsForHash().get(roomMetaKey(code), "active");
+                    return active == null || Boolean.parseBoolean(active.toString());
+                },
+                () -> {
+                    LocalRoomState state = localRooms.get(code);
+                    return state != null && state.active;
+                }
+        );
+    }
+
+    public String getLeadDisplayName(String code) {
+        return getLeadUserId(code);
+    }
+
+    public String getLeadUserId(String code) {
+        return executeWithFallback(
+                () -> {
+                    Object lead = redisTemplate.opsForHash().get(roomMetaKey(code), "leadUserId");
+                    if (lead == null) {
+                        lead = redisTemplate.opsForHash().get(roomMetaKey(code), "leadDisplayName");
+                    }
                     return lead == null ? null : lead.toString();
                 },
                 () -> {
                     LocalRoomState state = localRooms.get(code);
-                    return state == null ? null : state.leadDisplayName;
+                    return state == null ? null : state.leadUserId;
+                }
+        );
+    }
+
+    public Optional<ActiveMember> firstActiveMemberExcept(String code, String excludedUserId) {
+        String normalizedExcluded = normalizeSessionId(excludedUserId);
+        return executeWithFallback(
+                () -> activeRedisMembers(code).stream()
+                        .filter((member) -> !member.userId().equals(normalizedExcluded))
+                        .findFirst(),
+                () -> {
+                    LocalRoomState state = localRooms.get(code);
+                    if (state == null) {
+                        return Optional.empty();
+                    }
+                    pruneExpiredLocalMembers(code, state, false);
+                    return state.members.values().stream()
+                            .filter((member) -> !member.userId.equals(normalizedExcluded))
+                            .map((member) -> new ActiveMember(member.userId, member.displayName, member.cursorColor))
+                            .findFirst();
                 }
         );
     }
 
     @Scheduled(fixedDelay = 60_000)
-    void expireFallbackRooms() {
-        // No-op by design: the in-memory fallback is for local development only.
+    void expireStaleRooms() {
+        executeWithFallback(
+                () -> {
+                    for (String code : findKnownRoomCodes()) {
+                        int count = pruneExpiredRedisMembers(code, false);
+                        if (count <= 0) {
+                            markRoomInactive(code);
+                            if (vacancyExpired(code)) {
+                                deleteRoom(code);
+                            }
+                        }
+                    }
+                    return null;
+                },
+                () -> {
+                    for (Map.Entry<String, LocalRoomState> entry : new ArrayList<>(localRooms.entrySet())) {
+                        int count = pruneExpiredLocalMembers(entry.getKey(), entry.getValue(), false);
+                        if (count <= 0) {
+                            markRoomInactive(entry.getKey());
+                            if (localVacancyExpired(entry.getValue())) {
+                                localRooms.remove(entry.getKey());
+                            }
+                        }
+                    }
+                    return null;
+                }
+        );
     }
 
     @PreDestroy
@@ -312,11 +424,58 @@ public class EphemeralRoomStateService {
         localRooms.clear();
     }
 
+    private void upsertPresence(String code, String presenceId, String userId, String displayName, String cursorColor) {
+        executeWithFallback(
+                () -> {
+                    if (!presenceId.equals(userId)) {
+                        redisTemplate.opsForHash().delete(roomMembersKey(code), userId);
+                    }
+                    long now = System.currentTimeMillis();
+                    redisTemplate.opsForHash().put(roomMembersKey(code), presenceId, encodePresence(userId, displayName, cursorColor, now));
+                    redisTemplate.opsForHash().put(roomRecentMembersKey(code), userId, Long.toString(now));
+                    int activeCount = activeRedisMembers(code).size();
+                    writeActiveCount(code, activeCount);
+                    expireRoomKeys(code);
+                    return null;
+                },
+                () -> {
+                    LocalRoomState state = localState(code);
+                    if (!presenceId.equals(userId)) {
+                        state.members.remove(userId);
+                    }
+                    long now = System.currentTimeMillis();
+                    state.members.put(presenceId, new LocalMemberState(userId, displayName, cursorColor, now));
+                    state.recentMembers.put(userId, now);
+                    state.memberCount.set(countUniqueLocalUsers(state));
+                    return null;
+                }
+        );
+    }
+
+    private void removePresence(String code, String presenceId) {
+        executeWithFallback(
+                () -> {
+                    redisTemplate.opsForHash().delete(roomMembersKey(code), presenceId);
+                    writeActiveCount(code, activeRedisMembers(code).size());
+                    expireRoomKeys(code);
+                    return null;
+                },
+                () -> {
+                    LocalRoomState state = localRooms.get(code);
+                    if (state != null) {
+                        state.members.remove(presenceId);
+                        state.memberCount.set(countUniqueLocalUsers(state));
+                    }
+                    return null;
+                }
+        );
+    }
+
     private String allocateDisplayName(String code) {
         for (int attempt = 0; attempt < 20; attempt++) {
             int number = 10 + randomIndex(90);
             String displayName = "Pear #" + String.format("%02d", number);
-            if (!memberExists(code, displayName)) {
+            if (!displayNameExists(code, displayName)) {
                 return displayName;
             }
         }
@@ -327,8 +486,9 @@ public class EphemeralRoomStateService {
     private String nextCursorColor(String code) {
         return executeWithFallback(
                 () -> {
-                    long raw = redisTemplate.opsForValue().increment(roomColorCursorKey(code));
-                    int index = (int) ((raw - 1) % COLORS.size());
+                    Long raw = redisTemplate.opsForValue().increment(roomColorCursorKey(code));
+                    int index = (int) (((raw == null ? 1 : raw) - 1) % COLORS.size());
+                    expireRoomKeys(code);
                     return COLORS.get(index);
                 },
                 () -> {
@@ -345,6 +505,18 @@ public class EphemeralRoomStateService {
             return allocateDisplayName(code);
         }
         return displayName.trim();
+    }
+
+    private String normalizeSessionId(String sessionId) {
+        return sessionId == null ? "" : sessionId.trim();
+    }
+
+    private String normalizePresenceId(String connectionId, String userId) {
+        String normalized = normalizeSessionId(connectionId);
+        if (!normalized.isBlank()) {
+            return normalized;
+        }
+        return normalizeSessionId(userId);
     }
 
     private OffsetDateTime roomCreatedAt(String code) {
@@ -367,14 +539,231 @@ public class EphemeralRoomStateService {
         );
     }
 
-    private boolean memberExists(String code, String displayName) {
+    private boolean activeUserExists(String code, String userId) {
         return executeWithFallback(
-                () -> Boolean.TRUE.equals(redisTemplate.opsForHash().hasKey(roomMembersKey(code), displayName)),
+                () -> activeRedisMembers(code).stream().anyMatch((member) -> member.userId().equals(userId)),
                 () -> {
                     LocalRoomState state = localRooms.get(code);
-                    return state != null && state.members.containsKey(displayName);
+                    if (state == null) {
+                        return false;
+                    }
+                    pruneExpiredLocalMembers(code, state, false);
+                    return state.members.values().stream().anyMatch((member) -> member.userId.equals(userId));
                 }
         );
+    }
+
+    private boolean recentUserExists(String code, String userId) {
+        return executeWithFallback(
+                () -> {
+                    pruneExpiredRecentRedisMembers(code);
+                    return Boolean.TRUE.equals(redisTemplate.opsForHash().hasKey(roomRecentMembersKey(code), userId));
+                },
+                () -> {
+                    LocalRoomState state = localRooms.get(code);
+                    if (state == null) {
+                        return false;
+                    }
+                    pruneExpiredRecentLocalMembers(state);
+                    return state.recentMembers.containsKey(userId);
+                }
+        );
+    }
+
+    private boolean displayNameExists(String code, String displayName) {
+        return executeWithFallback(
+                () -> activeRedisMembers(code).stream().anyMatch((member) -> member.displayName().equals(displayName)),
+                () -> {
+                    LocalRoomState state = localRooms.get(code);
+                    if (state == null) {
+                        return false;
+                    }
+                    pruneExpiredLocalMembers(code, state, false);
+                    return state.members.values().stream().anyMatch((member) -> member.displayName.equals(displayName));
+                }
+        );
+    }
+
+    private int pruneExpiredRedisMembers(String code, boolean deleteIfEmpty) {
+        List<ActiveMember> active = activeRedisMembers(code);
+        int activeCount = active.size();
+        writeActiveCount(code, activeCount);
+        if (activeCount <= 0) {
+            markRoomInactive(code);
+            if (deleteIfEmpty && vacancyExpired(code)) {
+                deleteRoom(code);
+            }
+        }
+        return activeCount;
+    }
+
+    private List<ActiveMember> activeRedisMembers(String code) {
+        Map<Object, Object> entries = redisTemplate.opsForHash().entries(roomMembersKey(code));
+        if (entries.isEmpty()) {
+            return List.of();
+        }
+
+        long now = System.currentTimeMillis();
+        Map<String, ActiveMember> byUserId = new ConcurrentHashMap<>();
+        for (Map.Entry<Object, Object> entry : entries.entrySet()) {
+            String presenceId = String.valueOf(entry.getKey());
+            MemberPresence presence = decodePresence(String.valueOf(entry.getValue()), presenceId);
+            if (isExpired(now, presence.lastSeen())) {
+                redisTemplate.opsForHash().delete(roomMembersKey(code), presenceId);
+                continue;
+            }
+            byUserId.putIfAbsent(presence.userId(), new ActiveMember(presence.userId(), presence.displayName(), presence.cursorColor()));
+        }
+        return new ArrayList<>(byUserId.values());
+    }
+
+    private int pruneExpiredLocalMembers(String code, LocalRoomState state, boolean deleteIfEmpty) {
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, LocalMemberState> entry : new ArrayList<>(state.members.entrySet())) {
+            if (isExpired(now, entry.getValue().lastSeen)) {
+                state.members.remove(entry.getKey());
+            }
+        }
+
+        int activeCount = countUniqueLocalUsers(state);
+        state.memberCount.set(activeCount);
+        if (activeCount <= 0) {
+            state.active = false;
+            if (state.vacantSince == null) {
+                state.vacantSince = OffsetDateTime.now();
+            }
+            if (deleteIfEmpty && localVacancyExpired(state)) {
+                localRooms.remove(code);
+            }
+        }
+        return activeCount;
+    }
+
+    private void pruneExpiredRecentRedisMembers(String code) {
+        Map<Object, Object> entries = redisTemplate.opsForHash().entries(roomRecentMembersKey(code));
+        if (entries.isEmpty()) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        for (Map.Entry<Object, Object> entry : entries.entrySet()) {
+            long lastSeen = parseLong(String.valueOf(entry.getValue()), 0);
+            if (now - lastSeen > RECENT_MEMBER_TTL.toMillis()) {
+                redisTemplate.opsForHash().delete(roomRecentMembersKey(code), String.valueOf(entry.getKey()));
+            }
+        }
+    }
+
+    private void pruneExpiredRecentLocalMembers(LocalRoomState state) {
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, Long> entry : new ArrayList<>(state.recentMembers.entrySet())) {
+            if (now - entry.getValue() > RECENT_MEMBER_TTL.toMillis()) {
+                state.recentMembers.remove(entry.getKey());
+            }
+        }
+    }
+
+    private int countUniqueLocalUsers(LocalRoomState state) {
+        Set<String> ids = new HashSet<>();
+        for (LocalMemberState member : state.members.values()) {
+            ids.add(member.userId);
+        }
+        return ids.size();
+    }
+
+    private void writeActiveCount(String code, int activeCount) {
+        redisTemplate.opsForValue().set(roomCountKey(code), Integer.toString(Math.max(0, activeCount)), roomStateTtl);
+    }
+
+    private boolean vacancyExpired(String code) {
+        Object rawVacantSince = redisTemplate.opsForHash().get(roomMetaKey(code), "vacantSince");
+        if (rawVacantSince == null) {
+            return false;
+        }
+        try {
+            return OffsetDateTime.parse(rawVacantSince.toString()).plus(emptyRoomGrace).isBefore(OffsetDateTime.now());
+        } catch (RuntimeException ex) {
+            return false;
+        }
+    }
+
+    private boolean localVacancyExpired(LocalRoomState state) {
+        return state.vacantSince != null && state.vacantSince.plus(emptyRoomGrace).isBefore(OffsetDateTime.now());
+    }
+
+    private boolean isExpired(long now, long lastSeen) {
+        return now - lastSeen > MEMBER_STALE_TTL.toMillis();
+    }
+
+    private String encodePresence(String userId, String displayName, String color, long lastSeen) {
+        return encodeField(userId) + "|" + encodeField(displayName) + "|" + encodeField(color) + "|" + lastSeen;
+    }
+
+    private MemberPresence decodePresence(String raw, String fallbackId) {
+        String[] encodedParts = raw.split("\\|", 4);
+        if (encodedParts.length == 4) {
+            return new MemberPresence(
+                    decodeField(encodedParts[0], fallbackId),
+                    decodeField(encodedParts[1], fallbackId),
+                    decodeField(encodedParts[2], DEFAULT_COLOR),
+                    parseLong(encodedParts[3], System.currentTimeMillis())
+            );
+        }
+
+        String[] legacyParts = raw.split("\\|", 2);
+        if (legacyParts.length == 2) {
+            return new MemberPresence(
+                    fallbackId,
+                    fallbackId,
+                    legacyParts[0],
+                    parseLong(legacyParts[1], System.currentTimeMillis())
+            );
+        }
+
+        return new MemberPresence(fallbackId, fallbackId, raw, System.currentTimeMillis());
+    }
+
+    private String encodeField(String value) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String decodeField(String value, String fallback) {
+        try {
+            return new String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8);
+        } catch (RuntimeException ex) {
+            return fallback;
+        }
+    }
+
+    private long parseLong(String value, long fallback) {
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    private Set<String> findKnownRoomCodes() {
+        Set<String> codes = new HashSet<>();
+        Set<String> keys = redisTemplate.keys("room:*:count");
+        if (keys == null) {
+            return codes;
+        }
+
+        for (String key : keys) {
+            if (key != null && key.endsWith(":count")) {
+                codes.add(key.substring(5, key.length() - 6));
+            }
+        }
+        return codes;
+    }
+
+    private void expireRoomKeys(String code) {
+        redisTemplate.expire(roomMetaKey(code), roomStateTtl);
+        redisTemplate.expire(roomMembersKey(code), roomStateTtl);
+        redisTemplate.expire(roomRecentMembersKey(code), roomStateTtl);
+        redisTemplate.expire(roomAnnotationsKey(code), roomStateTtl);
+        redisTemplate.expire(roomColorCursorKey(code), roomStateTtl);
     }
 
     private int randomIndex(int upperBound) {
@@ -391,6 +780,10 @@ public class EphemeralRoomStateService {
 
     private String roomMembersKey(String code) {
         return "room:" + code + ":members";
+    }
+
+    private String roomRecentMembersKey(String code) {
+        return "room:" + code + ":recent-members";
     }
 
     private String roomAnnotationsKey(String code) {
@@ -418,14 +811,36 @@ public class EphemeralRoomStateService {
         return localAction.get();
     }
 
+    public record ActiveMember(String userId, String displayName, String cursorColor) {
+    }
+
     private static final class LocalRoomState {
-        private final Map<String, String> members = new ConcurrentHashMap<>();
+        private final Map<String, LocalMemberState> members = new ConcurrentHashMap<>();
+        private final Map<String, Long> recentMembers = new ConcurrentHashMap<>();
         private final Map<String, String> annotations = new ConcurrentHashMap<>();
         private final AtomicInteger memberCount = new AtomicInteger(0);
         private final AtomicInteger colorCursor = new AtomicInteger(0);
         private volatile OffsetDateTime createdAt;
+        private volatile OffsetDateTime vacantSince;
         private volatile boolean active;
         private volatile boolean locked;
-        private volatile String leadDisplayName;
+        private volatile String leadUserId;
+    }
+
+    private static final class LocalMemberState {
+        private final String userId;
+        private final String displayName;
+        private final String cursorColor;
+        private final long lastSeen;
+
+        private LocalMemberState(String userId, String displayName, String cursorColor, long lastSeen) {
+            this.userId = userId;
+            this.displayName = displayName;
+            this.cursorColor = cursorColor;
+            this.lastSeen = lastSeen;
+        }
+    }
+
+    private record MemberPresence(String userId, String displayName, String cursorColor, long lastSeen) {
     }
 }

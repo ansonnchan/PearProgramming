@@ -38,9 +38,9 @@ public class RoomController {
     public RoomJoinResponse join(@Valid @RequestBody JoinRoomRequest request) {
         log.info("Join room request received for code={}", request.code());
         if (request.displayName() != null && !request.displayName().isBlank()) {
-            return roomService.joinRoom(request.code(), request.displayName());
+            return roomService.joinRoom(request.code(), request.sessionId(), request.displayName());
         }
-        return roomService.joinRoom(request.code());
+        return roomService.joinRoom(request.code(), request.sessionId());
     }
 
     @GetMapping("/{code}")
@@ -50,8 +50,8 @@ public class RoomController {
     }
 
     @GetMapping("/{code}/access")
-    public RoomAccessDto access(@PathVariable String code, @RequestParam(required = false) String displayName) {
-        log.info("Room access request for code={}, displayName={}", code, displayName);
-        return roomService.getRoomAccess(code, displayName);
+    public RoomAccessDto access(@PathVariable String code, @RequestParam(required = false) String sessionId, @RequestParam(required = false) String displayName) {
+        log.info("Room access request for code={}, sessionId={}, displayName={}", code, sessionId, displayName);
+        return roomService.getRoomAccess(code, sessionId, displayName);
     }
 }

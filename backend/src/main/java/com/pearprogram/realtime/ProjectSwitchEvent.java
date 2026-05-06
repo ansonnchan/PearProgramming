@@ -11,10 +11,13 @@ public record ProjectSwitchEvent(
         String newFolder,
         String proposerId,
         String proposerName,
+        String targetUserId,
         String voterId,
         String voterName,
         List<String> requiredUserIds,
         List<String> approvedUserIds,
+        Boolean replaceExisting,
+        Boolean openUploaded,
         List<Map<String, Object>> files,
         OffsetDateTime at
 ) {

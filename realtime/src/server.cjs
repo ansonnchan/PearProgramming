@@ -13,7 +13,7 @@ const SNAPSHOT_ENDPOINT = process.env.SNAPSHOT_ENDPOINT || '';
 const ROOM_CLEANUP_ENDPOINT = process.env.ROOM_CLEANUP_ENDPOINT || deriveRoomCleanupEndpoint(SNAPSHOT_ENDPOINT);
 const SNAPSHOT_INTERVAL_MS = numberFromEnv('SNAPSHOT_INTERVAL_MS', 30_000);
 const ROOM_TTL_SECONDS = numberFromEnv('ROOM_TTL_SECONDS', 24 * 60 * 60);
-const ROOM_CLEANUP_GRACE_MS = numberFromEnv('ROOM_CLEANUP_GRACE_MS', 20_000);
+const ROOM_CLEANUP_GRACE_MS = numberFromEnv('ROOM_CLEANUP_GRACE_MS', 120_000);
 const REDIS_CONFIG = redisConfigFromEnv();
 
 const hydratedDocs = new Set();
@@ -165,6 +165,10 @@ async function hydrateDoc(doc, roomCode, fileId) {
 }
 
 async function hydratePostgresSnapshot(doc, roomCode, fileId) {
+  if (!SNAPSHOT_ENDPOINT) {
+    return;
+  }
+
   try {
     const response = await fetch(`${SNAPSHOT_ENDPOINT}/${fileId}/snapshot`, {
       signal: AbortSignal.timeout(2500)
@@ -246,6 +250,10 @@ async function flushRoomSnapshots(roomCode) {
 }
 
 async function flushSnapshot(docName, doc) {
+  if (!SNAPSHOT_ENDPOINT) {
+    return;
+  }
+
   const [roomCode, fileId] = docName.split(':');
   const started = performance.now();
   const encodedState = Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64');

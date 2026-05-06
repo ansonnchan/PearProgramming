@@ -1,16 +1,16 @@
 # PearProgram
 
-PearProgram is a production-grade portfolio project for a browser-based collaborative code editor. It uses a split real-time architecture:
+PearProgram is a browser-based collaborative code editor. It uses a split real-time architecture:
 
-- Spring Boot owns auth, rooms, metadata, chat, cursors, presence, AI proxying, persistence, and metrics.
-- A separate Node `y-websocket` service owns Yjs CRDT document synchronization.
-- React, Monaco, Yjs, SockJS/STOMP, Zustand, and Tailwind power the browser app.
+- Spring Boot owns rooms, chat, cursors, presence, room permissions, AI proxying, cleanup, and metrics.
+- A separate Node `y-websocket` service owns Yjs CRDT document synchronization and optional Redis-backed update persistence.
+- React, Monaco, Yjs, SockJS/STOMP, and Tailwind power the browser app.
 
 ## Repository Layout
 
 ```text
-backend/   Spring Boot API, WebSocket/STOMP, JPA, Flyway, Redis, metrics
-realtime/  Node y-websocket service with JWT validation and snapshot flushing
+backend/   Spring Boot API, WebSocket/STOMP, Redis-backed room presence, metrics
+realtime/  Node y-websocket service with optional Redis persistence and snapshot flushing
 frontend/  Vite + React + TypeScript + Monaco collaborative editor UI
 ```
 
@@ -20,7 +20,7 @@ frontend/  Vite + React + TypeScript + Monaco collaborative editor UI
 - Maven 3.9+
 - Node 20+
 - npm 10+
-- Docker Desktop, optional for PostgreSQL and Redis
+- Docker Desktop, optional for Redis
 
 ## Quick Start Without Docker
 
@@ -43,22 +43,21 @@ The realtime service loads `realtime/.env` automatically when it starts. It uses
 
 ```env
 REDIS_URL=rediss://default:<upstash-token>@<upstash-host>:6379
-SPRING_AUTH_URL=http://localhost:8081/auth/validate
 SNAPSHOT_ENDPOINT=http://localhost:8081/internal/files
 ROOM_CLEANUP_ENDPOINT=http://localhost:8081/internal/rooms
+ROOM_CLEANUP_GRACE_MS=120000
 PORT=1235
-ALLOW_ANONYMOUS=true
 ```
 
 Do not put `UPSTASH_REDIS_REST_URL` or `UPSTASH_REDIS_REST_TOKEN` into the realtime service unless the code is changed to use `@upstash/redis`. If no Redis TCP config is present, realtime starts with in-memory Yjs docs and logs that cross-instance persistence is unavailable.
 
-## Postgres/Redis Mode
+## Redis Mode
 
 ```powershell
 docker compose up -d
 
 cd backend
-mvn spring-boot:run -Dspring-boot.run.profiles=postgres
+mvn spring-boot:run
 
 cd ../realtime
 npm install
@@ -74,7 +73,6 @@ Default local endpoints:
 - Frontend: `http://localhost:5173`
 - Spring API/STOMP: `http://localhost:8081`
 - Node Yjs WebSocket: `ws://localhost:1235`
-- H2 console in no-Docker mode: `http://localhost:8081/h2-console`
 
 For two laptops on the same network, `localhost` only points to each laptop itself. Start backend and realtime bound normally, then set the second laptop's frontend env to the host machine's LAN IP:
 
@@ -86,15 +84,15 @@ VITE_YJS_URL=ws://YOUR_LAN_IP:1235
 
 If you are serving the Vite dev app from the host laptop too, start it with `npm run dev -- --host 0.0.0.0` so the second laptop can open it.
 
-The backend room table is the source of truth for create/join. Room codes are normalized by trimming spaces, removing dashes, and uppercasing before lookup.
+The backend room service is the source of truth for create/join. Room codes are normalized by trimming spaces, removing dashes, and uppercasing before lookup.
 
 ## Architecture Notes
 
-Yjs document edits flow only through the Node service. Spring handles STOMP events for chat, cursors, and presence. PostgreSQL stores durable snapshots and metadata, while Redis stores ephemeral room/session state with 24h TTL.
+Yjs document edits flow only through the Node service. Spring handles STOMP events for chat, cursors, permissions, file-tree sync events, and presence. Redis stores ephemeral room/session state with 24h TTL when configured; otherwise the backend falls back to in-memory room state for local development.
 
-In default local mode, H2 stands in for PostgreSQL and Redis health is disabled so no-Docker development stays green. The `postgres` Spring profile turns Flyway validation and Redis health checks back on.
+Supabase/PostgreSQL variables are not required by the current local runtime because file metadata and snapshots are not persisted through JPA in this version. Do not add Supabase credentials to `.env.example`; keep any production database credentials in the deployment provider's private environment settings.
 
-When the last user leaves a room, Spring schedules a short cleanup grace period before marking the room inactive. The realtime service also waits briefly after the last Yjs websocket closes, flushes snapshots, removes in-memory Yjs docs for that room, and asks Spring to clean up only if no members reconnected.
+When the last user leaves a room, Spring marks it inactive and schedules cleanup after `ROOM_CLEANUP_GRACE_SECONDS` seconds. The realtime service also waits after the last Yjs websocket closes, flushes snapshots when `SNAPSHOT_ENDPOINT` is configured, removes in-memory Yjs docs for that room, and asks Spring to clean up only if no members reconnected.
 
 ## Current Room UX
 

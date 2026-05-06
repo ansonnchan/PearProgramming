@@ -21,14 +21,9 @@ server:
 pearprogram:
   cors:
     allowed-origins: ${ALLOWED_ORIGINS:${PEARPROGRAM_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,https://*.vercel.app}}
-  jwt:
-    secret: ${JWT_SECRET:dev-only-change-me-dev-only-change-me}
   rooms:
-    ttl-hours: 24
-    cleanup-grace-seconds: ${ROOM_CLEANUP_GRACE_SECONDS:20}
+    cleanup-grace-seconds: ${ROOM_CLEANUP_GRACE_SECONDS:120}
     cleanup-scan-ms: ${ROOM_CLEANUP_SCAN_MS:5000}
-  yjs:
-    server-url: ${YJS_SERVER_URL:ws://localhost:1235}
   ai:
     placeholder-mode: ${PEARPROGRAM_AI_PLACEHOLDER:true}
 

@@ -16,7 +16,7 @@ export type Room = {
 
 export type RoomAccess = {
   canJoin: boolean;
-  reason: 'full' | 'locked' | null;
+  reason: 'full' | 'locked' | 'not_found' | null;
   locked: boolean;
   memberCount: number;
   maxUsers: number;
@@ -31,6 +31,7 @@ export type WorkspaceFile = {
   content: string;
   createdAt: string;
   updatedAt: string;
+  createdById?: string;
 };
 
 export type BootstrapResponse = {
@@ -104,6 +105,26 @@ export type ProjectSwitchEvent = {
   targetUserId?: string;
   requiredUserIds?: string[];
   approvedUserIds?: string[];
+  replaceExisting?: boolean;
+  openUploaded?: boolean;
   files?: WorkspaceFile[];
   at: string;
+};
+
+export type RoomSessionState = {
+  room: Room;
+  files: WorkspaceFile[];
+  openFileIds: string[];
+  activeFileId: string | null;
+  expandedFolderPaths: string[];
+  cursorPosition: {
+    line: number;
+    col: number;
+  };
+  roomLocked: boolean;
+  leadUserId: string | null;
+  chatOpen: boolean;
+  explorerOpen: boolean;
+  landingCode: string;
+  chatDraft: string;
 };
