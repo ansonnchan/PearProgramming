@@ -1,31 +1,20 @@
 package com.pearprogram.workspaces;
 
-import jakarta.transaction.Transactional;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Service
 public class WorkspaceService {
-    private final WorkspaceRepository workspaceRepository;
 
-    public WorkspaceService(WorkspaceRepository workspaceRepository) {
-        this.workspaceRepository = workspaceRepository;
-    }
-
-    @Transactional
     public WorkspaceDto createWorkspace(String name) {
-        Workspace workspace = new Workspace();
-        workspace.setName(name);
-        Workspace saved = workspaceRepository.save(workspace);
-        return WorkspaceDto.from(saved);
+        // Workspaces are no longer persisted; return a placeholder DTO.
+        return new WorkspaceDto(UUID.randomUUID(), name, OffsetDateTime.now());
     }
 
     public WorkspaceDto getWorkspace(UUID id) {
-        return workspaceRepository.findById(id)
-                .map(WorkspaceDto::from)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Workspace not found"));
+        // Workspaces are no longer persisted; return a placeholder DTO.
+        return new WorkspaceDto(id, "workspace", OffsetDateTime.now());
     }
 }

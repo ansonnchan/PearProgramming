@@ -12,15 +12,4 @@ public record FileDto(
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {
-    public static FileDto from(WorkspaceFile file) {
-        return new FileDto(
-                file.getId(),
-                file.getWorkspace().getId(),
-                file.getPath(),
-                file.getLanguage(),
-                file.getContent(),
-                file.getCreatedAt(),
-                file.getUpdatedAt()
-        );
-    }
 }

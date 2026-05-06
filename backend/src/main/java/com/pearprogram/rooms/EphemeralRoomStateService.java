@@ -1,6 +1,5 @@
 package com.pearprogram.rooms;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -8,288 +7,249 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.time.Instant;
-import java.util.HashSet;
-import java.util.Map;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class EphemeralRoomStateService {
     private static final Logger log = LoggerFactory.getLogger(EphemeralRoomStateService.class);
     private static final int MAX_ROOM_USERS = 5;
+    private static final List<String> COLORS = List.of(
+            "#378ADD",
+            "#1D9E75",
+            "#F59E0B",
+            "#D946EF",
+            "#EF4444",
+            "#0EA5E9"
+    );
 
     private final StringRedisTemplate redisTemplate;
     private final Duration roomStateTtl;
-    private final Map<String, FallbackRoom> fallbackRooms = new ConcurrentHashMap<>();
-    private final Map<String, FallbackRuntimeState> fallbackRuntimeStates = new ConcurrentHashMap<>();
-    private volatile boolean redisAvailable = true;
 
-    public EphemeralRoomStateService(
-            StringRedisTemplate redisTemplate,
-            @Value("${pearprogram.rooms.ttl-hours}") long ttlHours
-    ) {
+    public EphemeralRoomStateService(StringRedisTemplate redisTemplate) {
         this.redisTemplate = redisTemplate;
-        this.roomStateTtl = Duration.ofHours(ttlHours);
+        this.roomStateTtl = Duration.ofHours(24);
     }
 
-    public boolean codeExists(String code) {
-        String key = roomCodeKey(code);
-        try {
-            Boolean exists = redisTemplate.hasKey(key);
-            redisAvailable = true;
-            return Boolean.TRUE.equals(exists) || fallbackContains(code);
-        } catch (RuntimeException ex) {
-            markRedisDown(ex);
-            return fallbackContains(code);
-        }
+    public boolean reserveRoomCode(String code) {
+        return Boolean.TRUE.equals(redisTemplate.opsForValue().setIfAbsent(roomCountKey(code), "0"));
     }
 
-    public void saveRoomMapping(String code, UUID workspaceId, Duration ttl) {
-        try {
-            redisTemplate.opsForValue().set(roomCodeKey(code), workspaceId.toString(), ttl);
-            redisTemplate.opsForHash().put(roomKey(code), "workspaceId", workspaceId.toString());
-            redisTemplate.expire(roomKey(code), ttl);
-            redisAvailable = true;
-        } catch (RuntimeException ex) {
-            markRedisDown(ex);
-            fallbackRooms.put(code, new FallbackRoom(workspaceId, Instant.now().plus(ttl)));
-        }
+    public void initializeRoom(String code, OffsetDateTime createdAt) {
+        redisTemplate.opsForHash().put(roomMetaKey(code), "createdAt", createdAt.toString());
+        redisTemplate.opsForHash().put(roomMetaKey(code), "active", "true");
+        redisTemplate.delete(roomMembersKey(code));
+        redisTemplate.delete(roomAnnotationsKey(code));
+        redisTemplate.opsForValue().setIfAbsent(roomCountKey(code), "0");
+        redisTemplate.opsForValue().setIfAbsent(roomColorCursorKey(code), "0");
     }
 
-    public boolean isRedisAvailable() {
-        return redisAvailable;
+    public boolean roomExists(String code) {
+        return Boolean.TRUE.equals(redisTemplate.hasKey(roomCountKey(code)))
+                || Boolean.TRUE.equals(redisTemplate.hasKey(roomMetaKey(code)));
     }
 
     public int activeMemberCount(String code) {
+        String raw = redisTemplate.opsForValue().get(roomCountKey(code));
+        if (raw == null || raw.isBlank()) {
+            return 0;
+        }
         try {
-            redisAvailable = true;
-            return redisMembers(code).size();
-        } catch (RuntimeException ex) {
-            markRedisDown(ex);
-            return fallbackRuntimeState(code).members.size();
+            return Integer.parseInt(raw);
+        } catch (NumberFormatException ex) {
+            return 0;
         }
     }
 
-    public RoomAccessDto roomAccess(String code, String userId) {
-        try {
-            Set<String> members = redisMembers(code);
-            boolean locked = redisLocked(code);
-            String leadUserId = redisLeadUserId(code);
-            redisAvailable = true;
-            return accessFrom(code, userId, members, locked, leadUserId);
-        } catch (RuntimeException ex) {
-            markRedisDown(ex);
-            FallbackRuntimeState state = fallbackRuntimeState(code);
-            return accessFrom(code, userId, new HashSet<>(state.members), state.locked, state.leadUserId);
-        }
+    public RoomDto getRoomSummary(String code, String joinUrl) {
+        return new RoomDto(
+                code,
+                code,
+                joinUrl,
+                roomExists(code),
+                roomCreatedAt(code),
+                activeMemberCount(code),
+                MAX_ROOM_USERS,
+                isLocked(code),
+                getLeadDisplayName(code)
+        );
     }
 
-    public RoomAccessDto joinRoom(String code, String userId) {
-        if (userId == null || userId.isBlank()) {
-            return roomAccess(code, userId);
-        }
-
-        RoomAccessDto accessBeforeJoin = roomAccess(code, userId);
-        if (!accessBeforeJoin.canJoin()) {
-            return accessBeforeJoin;
-        }
-
-        try {
-            redisTemplate.opsForSet().add(roomMembersKey(code), userId);
-            if (isBlank(redisLeadUserId(code))) {
-                redisTemplate.opsForHash().put(roomKey(code), "leadUserId", userId);
-            }
-            expireRuntimeKeys(code);
-            redisAvailable = true;
-            return roomAccess(code, userId);
-        } catch (RuntimeException ex) {
-            markRedisDown(ex);
-            FallbackRuntimeState state = fallbackRuntimeState(code);
-            state.members.add(userId);
-            if (isBlank(state.leadUserId)) {
-                state.leadUserId = userId;
-            }
-            state.expiresAt = Instant.now().plus(roomStateTtl);
-            return accessFrom(code, userId, new HashSet<>(state.members), state.locked, state.leadUserId);
-        }
+    public RoomAccessDto roomAccess(String code, String ignoredUserId) {
+        boolean locked = isLocked(code);
+        int memberCount = activeMemberCount(code);
+        boolean canJoin = roomExists(code) && !locked && memberCount < MAX_ROOM_USERS;
+        return new RoomAccessDto(canJoin, canJoin ? null : locked ? "locked" : "full", locked, memberCount, MAX_ROOM_USERS, getLeadDisplayName(code));
     }
 
-    public RoomAccessDto leaveRoom(String code, String userId) {
-        if (userId == null || userId.isBlank()) {
-            return roomAccess(code, userId);
+    public RoomJoinResponse joinRoom(String code) {
+        if (!roomExists(code)) {
+            throw new IllegalArgumentException("Room not found");
         }
 
-        try {
-            redisTemplate.opsForSet().remove(roomMembersKey(code), userId);
-            Set<String> members = redisMembers(code);
-            String leadUserId = redisLeadUserId(code);
-            if (userId.equals(leadUserId)) {
-                String nextLead = members.stream().findFirst().orElse(null);
-                setRedisLeadUserId(code, nextLead);
-                leadUserId = nextLead;
-            }
-            expireRuntimeKeys(code);
-            redisAvailable = true;
-            return accessFrom(code, userId, members, redisLocked(code), leadUserId);
-        } catch (RuntimeException ex) {
-            markRedisDown(ex);
-            FallbackRuntimeState state = fallbackRuntimeState(code);
-            state.members.remove(userId);
-            if (userId.equals(state.leadUserId)) {
-                state.leadUserId = state.members.stream().findFirst().orElse(null);
-            }
-            state.expiresAt = Instant.now().plus(roomStateTtl);
-            return accessFrom(code, userId, new HashSet<>(state.members), state.locked, state.leadUserId);
+        RoomAccessDto access = roomAccess(code, null);
+        if (!access.canJoin()) {
+            throw new IllegalStateException(access.reason() == null ? "Room unavailable" : access.reason());
         }
+
+        String displayName = allocateDisplayName(code);
+        String cursorColor = nextCursorColor(code);
+        redisTemplate.opsForHash().put(roomMembersKey(code), displayName, cursorColor);
+        redisTemplate.opsForValue().increment(roomCountKey(code));
+        redisTemplate.expire(roomCountKey(code), roomStateTtl);
+        redisTemplate.expire(roomMembersKey(code), roomStateTtl);
+        redisTemplate.expire(roomAnnotationsKey(code), roomStateTtl);
+        log.info("Joined room {} as {} ({})", code, displayName, cursorColor);
+        return new RoomJoinResponse(code, displayName, cursorColor, activeMemberCount(code), MAX_ROOM_USERS);
     }
 
-    public RoomAccessDto transferLead(String code, String leadUserId) {
-        if (leadUserId == null || leadUserId.isBlank()) {
-            return roomAccess(code, leadUserId);
+    public RoomJoinResponse joinRoom(String code, String displayName, String cursorColor) {
+        String normalized = normalizeIdentity(displayName, code);
+        String color = cursorColor == null || cursorColor.isBlank() ? nextCursorColor(code) : cursorColor;
+        if (!roomExists(code)) {
+            throw new IllegalArgumentException("Room not found");
         }
 
-        try {
-            redisTemplate.opsForHash().put(roomKey(code), "leadUserId", leadUserId);
-            expireRuntimeKeys(code);
-            redisAvailable = true;
-            return roomAccess(code, leadUserId);
-        } catch (RuntimeException ex) {
-            markRedisDown(ex);
-            FallbackRuntimeState state = fallbackRuntimeState(code);
-            state.leadUserId = leadUserId;
-            state.expiresAt = Instant.now().plus(roomStateTtl);
-            return accessFrom(code, leadUserId, new HashSet<>(state.members), state.locked, state.leadUserId);
+        Object existing = redisTemplate.opsForHash().get(roomMembersKey(code), normalized);
+        if (existing == null) {
+            redisTemplate.opsForHash().put(roomMembersKey(code), normalized, color);
+            redisTemplate.opsForValue().increment(roomCountKey(code));
         }
+        redisTemplate.expire(roomCountKey(code), roomStateTtl);
+        redisTemplate.expire(roomMembersKey(code), roomStateTtl);
+        redisTemplate.expire(roomAnnotationsKey(code), roomStateTtl);
+        return new RoomJoinResponse(code, normalized, color, activeMemberCount(code), MAX_ROOM_USERS);
     }
 
-    public RoomAccessDto setLocked(String code, String userId, boolean locked) {
-        try {
-            String leadUserId = redisLeadUserId(code);
-            if (!isBlank(leadUserId) && !leadUserId.equals(userId)) {
-                return roomAccess(code, userId);
-            }
-            if (isBlank(leadUserId) && !isBlank(userId)) {
-                redisTemplate.opsForHash().put(roomKey(code), "leadUserId", userId);
-            }
-            redisTemplate.opsForHash().put(roomKey(code), "locked", Boolean.toString(locked));
-            expireRuntimeKeys(code);
-            redisAvailable = true;
-            return roomAccess(code, userId);
-        } catch (RuntimeException ex) {
-            markRedisDown(ex);
-            FallbackRuntimeState state = fallbackRuntimeState(code);
-            if (!isBlank(state.leadUserId) && !state.leadUserId.equals(userId)) {
-                return accessFrom(code, userId, new HashSet<>(state.members), state.locked, state.leadUserId);
-            }
-            if (isBlank(state.leadUserId)) {
-                state.leadUserId = userId;
-            }
-            state.locked = locked;
-            state.expiresAt = Instant.now().plus(roomStateTtl);
-            return accessFrom(code, userId, new HashSet<>(state.members), state.locked, state.leadUserId);
+    public RoomAccessDto leaveRoom(String code, String displayName) {
+        if (!roomExists(code)) {
+            return new RoomAccessDto(false, "not_found", false, 0, MAX_ROOM_USERS, null);
         }
+
+        if (displayName != null && !displayName.isBlank()) {
+            redisTemplate.opsForHash().delete(roomMembersKey(code), displayName);
+            redisTemplate.opsForValue().decrement(roomCountKey(code));
+        }
+
+        int memberCount = Math.max(activeMemberCount(code), 0);
+        if (memberCount <= 0) {
+            deleteRoom(code);
+            return new RoomAccessDto(false, "closed", false, 0, MAX_ROOM_USERS, null);
+        }
+
+        return new RoomAccessDto(true, null, isLocked(code), memberCount, MAX_ROOM_USERS, getLeadDisplayName(code));
+    }
+
+    public RoomAccessDto transferLead(String code, String leadDisplayName) {
+        if (!roomExists(code)) {
+            return new RoomAccessDto(false, "not_found", false, 0, MAX_ROOM_USERS, null);
+        }
+
+        if (leadDisplayName == null || leadDisplayName.isBlank()) {
+            redisTemplate.opsForHash().delete(roomMetaKey(code), "leadDisplayName");
+        } else {
+            redisTemplate.opsForHash().put(roomMetaKey(code), "leadDisplayName", leadDisplayName);
+        }
+        return new RoomAccessDto(true, null, isLocked(code), activeMemberCount(code), MAX_ROOM_USERS, getLeadDisplayName(code));
+    }
+
+    public RoomAccessDto setLocked(String code, String ignoredUserId, boolean locked) {
+        if (!roomExists(code)) {
+            return new RoomAccessDto(false, "not_found", false, 0, MAX_ROOM_USERS, null);
+        }
+
+        redisTemplate.opsForHash().put(roomMetaKey(code), "locked", Boolean.toString(locked));
+        return new RoomAccessDto(true, null, locked, activeMemberCount(code), MAX_ROOM_USERS, getLeadDisplayName(code));
     }
 
     public void clearRuntimeState(String code) {
-        try {
-            redisTemplate.delete(roomMembersKey(code));
-            redisTemplate.opsForHash().delete(roomKey(code), "locked", "leadUserId");
-            redisAvailable = true;
-        } catch (RuntimeException ex) {
-            markRedisDown(ex);
-            fallbackRuntimeStates.remove(code);
-        }
+        redisTemplate.delete(roomMembersKey(code));
+        redisTemplate.delete(roomCountKey(code));
+        redisTemplate.delete(roomMetaKey(code));
+        redisTemplate.delete(roomAnnotationsKey(code));
+        redisTemplate.delete(roomColorCursorKey(code));
+    }
+
+    public void deleteRoom(String code) {
+        clearRuntimeState(code);
+    }
+
+    public boolean isLocked(String code) {
+        Object locked = redisTemplate.opsForHash().get(roomMetaKey(code), "locked");
+        return locked != null && Boolean.parseBoolean(locked.toString());
+    }
+
+    public String getLeadDisplayName(String code) {
+        Object lead = redisTemplate.opsForHash().get(roomMetaKey(code), "leadDisplayName");
+        return lead == null ? null : lead.toString();
     }
 
     @Scheduled(fixedDelay = 60_000)
     void expireFallbackRooms() {
-        Instant now = Instant.now();
-        fallbackRooms.entrySet().removeIf(entry -> entry.getValue().expiresAt().isBefore(now));
-        fallbackRuntimeStates.entrySet().removeIf(entry -> entry.getValue().expiresAt.isBefore(now));
+        // No-op by design: room state is Redis-only and rooms live until explicitly emptied.
     }
 
-    private boolean fallbackContains(String code) {
-        FallbackRoom room = fallbackRooms.get(code);
-        return room != null && room.expiresAt().isAfter(Instant.now());
-    }
-
-    private void markRedisDown(RuntimeException ex) {
-        if (redisAvailable) {
-            log.warn("Redis unavailable; falling back to single-instance in-memory room state. {}", ex.getMessage());
+    private String allocateDisplayName(String code) {
+        for (int attempt = 0; attempt < 20; attempt++) {
+            int number = 10 + randomIndex(90);
+            String displayName = "Pear #" + String.format("%02d", number);
+            if (!redisTemplate.opsForHash().hasKey(roomMembersKey(code), displayName)) {
+                return displayName;
+            }
         }
-        redisAvailable = false;
+
+        return "Pear #" + String.format("%02d", 10 + randomIndex(90));
     }
 
-    private String roomCodeKey(String code) {
-        return "room-code:" + code;
+    private String nextCursorColor(String code) {
+        long raw = redisTemplate.opsForValue().increment(roomColorCursorKey(code));
+        int index = (int) ((raw - 1) % COLORS.size());
+        return COLORS.get(index);
     }
 
-    private String roomKey(String code) {
+    private String normalizeIdentity(String displayName, String code) {
+        if (displayName == null || displayName.isBlank()) {
+            return allocateDisplayName(code);
+        }
+        return displayName.trim();
+    }
+
+    private OffsetDateTime roomCreatedAt(String code) {
+        Object createdAt = redisTemplate.opsForHash().get(roomMetaKey(code), "createdAt");
+        if (createdAt == null) {
+            return OffsetDateTime.now();
+        }
+        try {
+            return OffsetDateTime.parse(createdAt.toString());
+        } catch (RuntimeException ex) {
+            return OffsetDateTime.now();
+        }
+    }
+
+    private int randomIndex(int upperBound) {
+        return new java.security.SecureRandom().nextInt(upperBound);
+    }
+
+    private String roomMetaKey(String code) {
         return "room:" + code;
+    }
+
+    private String roomCountKey(String code) {
+        return "room:" + code + ":count";
     }
 
     private String roomMembersKey(String code) {
         return "room:" + code + ":members";
     }
 
-    private RoomAccessDto accessFrom(String code, String userId, Set<String> members, boolean locked, String leadUserId) {
-        boolean alreadyInside = userId != null && members.contains(userId);
-        String normalizedLeadUserId = isBlank(leadUserId) ? null : leadUserId;
-        boolean full = members.size() >= MAX_ROOM_USERS;
-        boolean canJoin = alreadyInside || (!locked && !full);
-        String reason = canJoin ? null : locked ? "locked" : "full";
-        return new RoomAccessDto(canJoin, reason, locked, members.size(), MAX_ROOM_USERS, normalizedLeadUserId);
+    private String roomAnnotationsKey(String code) {
+        return "room:" + code + ":annotations";
     }
 
-    private Set<String> redisMembers(String code) {
-        Set<String> members = redisTemplate.opsForSet().members(roomMembersKey(code));
-        return members == null ? Set.of() : members;
-    }
-
-    private boolean redisLocked(String code) {
-        Object value = redisTemplate.opsForHash().get(roomKey(code), "locked");
-        return Boolean.parseBoolean(value == null ? "false" : value.toString());
-    }
-
-    private String redisLeadUserId(String code) {
-        Object value = redisTemplate.opsForHash().get(roomKey(code), "leadUserId");
-        return value == null ? null : value.toString();
-    }
-
-    private void setRedisLeadUserId(String code, String leadUserId) {
-        if (isBlank(leadUserId)) {
-            redisTemplate.opsForHash().delete(roomKey(code), "leadUserId");
-        } else {
-            redisTemplate.opsForHash().put(roomKey(code), "leadUserId", leadUserId);
-        }
-    }
-
-    private void expireRuntimeKeys(String code) {
-        redisTemplate.expire(roomKey(code), roomStateTtl);
-        redisTemplate.expire(roomMembersKey(code), roomStateTtl);
-    }
-
-    private FallbackRuntimeState fallbackRuntimeState(String code) {
-        return fallbackRuntimeStates.computeIfAbsent(code, ignored -> new FallbackRuntimeState(Instant.now().plus(roomStateTtl)));
-    }
-
-    private boolean isBlank(String value) {
-        return value == null || value.isBlank();
-    }
-
-    private record FallbackRoom(UUID workspaceId, Instant expiresAt) {
-    }
-
-    private static class FallbackRuntimeState {
-        private final Set<String> members = ConcurrentHashMap.newKeySet();
-        private volatile boolean locked;
-        private volatile String leadUserId;
-        private volatile Instant expiresAt;
-
-        private FallbackRuntimeState(Instant expiresAt) {
-            this.expiresAt = expiresAt;
-        }
+    private String roomColorCursorKey(String code) {
+        return "room:" + code + ":color-cursor";
     }
 }

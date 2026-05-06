@@ -11,18 +11,4 @@ public record ChatMessageDto(
         boolean ai,
         OffsetDateTime createdAt
 ) {
-    public static ChatMessageDto from(ChatMessage message) {
-        UUID userId = message.getUser() == null ? null : message.getUser().getId();
-        String displayName = message.isAi()
-                ? "AI"
-                : message.getUser() == null ? "Guest" : message.getUser().getDisplayName();
-        return new ChatMessageDto(
-                message.getId(),
-                userId,
-                displayName,
-                message.getContent(),
-                message.isAi(),
-                message.getCreatedAt()
-        );
-    }
 }

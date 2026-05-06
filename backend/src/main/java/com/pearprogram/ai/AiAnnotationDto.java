@@ -12,16 +12,4 @@ public record AiAnnotationDto(
         String content,
         OffsetDateTime createdAt
 ) {
-    public static AiAnnotationDto from(AiAnnotation annotation) {
-        String triggeredBy = annotation.getTriggeredBy() == null ? null : annotation.getTriggeredBy().getDisplayName();
-        return new AiAnnotationDto(
-                annotation.getId(),
-                annotation.getFile().getId(),
-                annotation.getRoom().getCode(),
-                triggeredBy,
-                annotation.getLine(),
-                annotation.getContent(),
-                annotation.getCreatedAt()
-        );
-    }
 }

@@ -1,24 +1,16 @@
 package com.pearprogram.rooms;
 
 import java.time.OffsetDateTime;
-import java.util.UUID;
 
 public record RoomDto(
-        UUID id,
+        String id,
         String code,
-        UUID workspaceId,
+        String joinUrl,
         boolean active,
         OffsetDateTime createdAt,
-        OffsetDateTime expiresAt
+        int memberCount,
+        int maxUsers,
+        boolean locked,
+        String leadUserId
 ) {
-    public static RoomDto from(Room room) {
-        return new RoomDto(
-                room.getId(),
-                room.getCode(),
-                room.getWorkspace().getId(),
-                room.isActive(),
-                room.getCreatedAt(),
-                room.getExpiresAt()
-        );
-    }
 }

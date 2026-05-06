@@ -1,6 +1,7 @@
 package com.pearprogram.bootstrap;
 
 import com.pearprogram.files.FileService;
+import com.pearprogram.rooms.RoomCreateResponse;
 import com.pearprogram.rooms.RoomDto;
 import com.pearprogram.rooms.RoomService;
 import com.pearprogram.workspaces.WorkspaceDto;
@@ -25,7 +26,7 @@ public class BootstrapController {
     @PostMapping
     public BootstrapResponse createDemoRoom() {
         WorkspaceDto workspace = workspaceService.createWorkspace("pearprogram-demo");
-        RoomDto room = roomService.createRoom(workspace.id());
-        return new BootstrapResponse(workspace, room, fileService.listFiles(workspace.id()));
+        RoomCreateResponse room = roomService.createRoom(workspace.id());
+        return new BootstrapResponse(workspace, roomService.getRoom(room.code()), fileService.listFiles(workspace.id()));
     }
 }
