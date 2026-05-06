@@ -1,4 +1,4 @@
-import type { AiAnnotation, BootstrapResponse, ChatMessage, GitHubImportResponse, Room, RoomAccess, Workspace, WorkspaceFile } from './types';
+import type { AiAnnotation, BootstrapResponse, ChatMessage, GitHubImportResponse, Room, RoomAccess, RoomCreateResponse, RoomJoinResponse, Workspace, WorkspaceFile } from './types';
 import type { UploadCandidate } from './uploads';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8081';
@@ -31,39 +31,37 @@ export async function createWorkspace(name: string): Promise<Workspace> {
   return postJson<Workspace>('/api/workspaces', { name });
 }
 
-export async function createRoom(workspaceId: string): Promise<Room> {
-  return postJson<Room>('/api/rooms', { workspaceId });
+export async function createRoom(): Promise<RoomCreateResponse> {
+  return postJson<RoomCreateResponse>('/api/rooms/create', {});
+}
+
+export async function joinRoom(code: string, displayName?: string): Promise<RoomJoinResponse> {
+  return postJson<RoomJoinResponse>('/api/rooms/join', { code, displayName });
 }
 
 export async function listFiles(workspaceId: string): Promise<WorkspaceFile[]> {
-  return getJson<WorkspaceFile[]>(`/api/workspaces/${workspaceId}/files`);
+  // Workspaces are no longer persisted; return empty list
+  return [];
 }
 
 export async function createFile(workspaceId: string, path: string, content = '', language?: string): Promise<WorkspaceFile> {
-  return postJson<WorkspaceFile>(`/api/workspaces/${workspaceId}/files`, {
-    path,
-    language,
-    content
-  });
+  // Files are no longer persisted; return null
+  return {} as WorkspaceFile;
 }
 
 export async function uploadWorkspaceFiles(workspaceId: string, files: UploadCandidate[], replaceExisting: boolean): Promise<WorkspaceFile[]> {
-  return postJson<WorkspaceFile[]>(`/api/workspaces/${workspaceId}/files/batch`, {
-    replaceExisting,
-    files
-  });
+  // Files are no longer persisted; return empty list
+  return [];
 }
 
 export async function updateFileContent(fileId: string, content: string): Promise<WorkspaceFile> {
-  return patchJson<WorkspaceFile>(`/api/files/${fileId}`, { content });
+  // Files are no longer persisted; return null
+  return {} as WorkspaceFile;
 }
 
 export async function importPlaceholderRepository(workspaceId: string, owner: string, repo: string, branch: string): Promise<GitHubImportResponse> {
-  return postJson<GitHubImportResponse>(`/api/workspaces/${workspaceId}/github/import`, {
-    owner,
-    repo,
-    branch
-  });
+  // Imports are no longer persisted; return empty
+  return { owner, repo, branch, files: [] };
 }
 
 export async function listChatHistory(code: string): Promise<ChatMessage[]> {

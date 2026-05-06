@@ -5,12 +5,13 @@ export type Workspace = {
 };
 
 export type Room = {
-  id: string;
   code: string;
-  workspaceId: string;
   active: boolean;
   createdAt: string;
-  expiresAt: string;
+  memberCount: number;
+  maxUsers: number;
+  locked: boolean;
+  leadUserId: string | null;
 };
 
 export type RoomAccess = {
@@ -36,6 +37,21 @@ export type BootstrapResponse = {
   workspace: Workspace;
   room: Room;
   files: WorkspaceFile[];
+};
+
+export type RoomCreateResponse = {
+  code: string;
+  joinUrl: string;
+  createdAt: string;
+  memberCount: number;
+};
+
+export type RoomJoinResponse = {
+  code: string;
+  displayName: string;
+  cursorColor: string;
+  memberCount: number;
+  maxUsers: number;
 };
 
 export type ChatMessage = {

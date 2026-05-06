@@ -31,6 +31,7 @@ import {
   dismissAnnotation,
   getRoom,
   getRoomAccess,
+  joinRoom as apiJoinRoom,
   listAnnotations,
   listChatHistory,
   listFiles,
@@ -46,15 +47,16 @@ import type { UploadCandidate, UploadReadResult } from './uploads';
 import { projectNameForPaths, readUploadCandidates } from './uploads';
 import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, WorkspaceFile } from './types';
 
-const USER_COLORS = ['#378ADD', '#1D9E75', '#F59E0B', '#D946EF', '#EF4444'];
+const DEFAULT_COLOR = '#000000';
 
 const FALLBACK_ROOM: Room = {
-  id: 'local-room',
   code: 'LOCAL1',
-  workspaceId: 'local-workspace',
   active: true,
   createdAt: new Date().toISOString(),
-  expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+  memberCount: 1,
+  maxUsers: 10,
+  locked: false,
+  leadUserId: null
 };
 
 type TreeNode = {
@@ -179,7 +181,7 @@ export default function App() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const entryAvatarInputRef = useRef<HTMLInputElement | null>(null);
 
-  const joinRoom = useCallback(async (rawCode: string, replaceUrl = true) => {
+  const handleJoinRoom = useCallback(async (rawCode: string, displayName?: string, replaceUrl = true) => {
     const code = normalizeRoomCode(rawCode);
     if (!isValidRoomCode(code)) {
       setLandingError('Please enter in a valid pear room code');
@@ -197,9 +199,9 @@ export default function App() {
           : 'Room is Full.');
         return;
       }
+      await apiJoinRoom(code, displayName);
       const joinedRoom = await getRoom(code);
-      const joinedFiles = await listFiles(joinedRoom.workspaceId);
-      openRoom(joinedRoom, joinedFiles, replaceUrl, access.leadUserId, access.locked);
+      openRoom(joinedRoom, [], replaceUrl);
     } catch (error) {
       console.warn('Join room failed', { apiBaseUrl: API_BASE_URL, code, error });
       setLandingError(error instanceof ApiError && error.status === 404
@@ -215,20 +217,20 @@ export default function App() {
     setLandingError('');
     setLandingNotice('');
     try {
-      const workspace = await createWorkspace(`Pear room ${formatRoomNameDate(new Date())}`);
-      const createdRoom = await createRoom(workspace.id);
-      openRoom(createdRoom, [], true, user.id, false);
+      const createResponse = await createRoom();
+      const createdRoom = await getRoom(createResponse.code);
+      openRoom(createdRoom, [], true);
     } catch (error) {
       console.warn('Create room failed', { apiBaseUrl: API_BASE_URL, error });
       setLandingError(`Could not create a shared room. The frontend tried ${API_BASE_URL}.`);
     } finally {
       setCreatingRoom(false);
     }
-  }, [user.id]);
+  }, []);
 
   const scheduleAutosave = useCallback((fileId: string, content: string) => {
     const currentRoom = roomRef.current;
-    if (!currentRoom || currentRoom.id === FALLBACK_ROOM.id || !isUuid(fileId)) {
+    if (!currentRoom || currentRoom.code === FALLBACK_ROOM.code || !isUuid(fileId)) {
       setSaveState('offline');
       return;
     }
@@ -304,12 +306,12 @@ export default function App() {
           fileId: currentFile.id,
           line: event.position.lineNumber,
           col: event.position.column,
-          color: user.color,
+          color: DEFAULT_COLOR,
           sentAt: now
         })
       });
     });
-  }, [scheduleAutosave, user.color, user.id, user.name]);
+  }, [scheduleAutosave, user.id, user.name]);
 
   useEffect(() => {
     roomRef.current = room;
@@ -427,7 +429,7 @@ export default function App() {
             type: 'joined',
             userId: user.id,
             displayName: user.name,
-            color: user.color,
+            color: DEFAULT_COLOR,
             avatarUrl: user.avatarUrl,
             leadUserId: leadUserIdRef.current,
             locked: roomLocked,
@@ -450,7 +452,7 @@ export default function App() {
             type: 'left',
             userId: user.id,
             displayName: user.name,
-            color: user.color,
+            color: DEFAULT_COLOR,
             avatarUrl: user.avatarUrl,
             leadUserId: leadUserIdRef.current,
             locked: roomLocked,
@@ -462,7 +464,7 @@ export default function App() {
       setStompConnected(false);
       setStompClient(null);
     };
-  }, [room, user.avatarUrl, user.color, user.id, user.name]);
+  }, [room, user.avatarUrl, user.id, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -487,7 +489,7 @@ export default function App() {
       return;
     }
 
-    const shouldSeedLocalText = currentRoom.id === FALLBACK_ROOM.id || !isUuid(currentFile.id);
+    const shouldSeedLocalText = currentRoom.code === FALLBACK_ROOM.code || !isUuid(currentFile.id);
     if (shouldSeedLocalText && yText.length === 0 && currentFile.content) {
       yText.insert(0, currentFile.content);
     }
@@ -497,7 +499,7 @@ export default function App() {
     const suppressTimer = window.setTimeout(() => {
       suppressEditorChangeRef.current = false;
     }, 0);
-    provider.awareness.setLocalStateField('user', { name: user.name, color: user.color });
+    provider.awareness.setLocalStateField('user', { name: user.name, color: DEFAULT_COLOR });
     provider.on('status', ({ status }: { status: string }) => {
       setSyncStatus(status === 'connected' ? 'Yjs synced' : 'Yjs reconnecting');
     });
@@ -1035,11 +1037,11 @@ export default function App() {
     }
 
     if (action === 'join') {
-      await joinRoom(landingCode);
+      await handleJoinRoom(landingCode, displayName);
     }
   }
 
-  function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean, nextLeadUserId: string | null, locked: boolean) {
+  function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean) {
     const sortedFiles = nextFiles.sort(sortByPath);
     const firstFileId = sortedFiles[0]?.id ?? null;
     setRoom(nextRoom);
@@ -1051,8 +1053,8 @@ export default function App() {
     setAnnotations([]);
     setCursors({});
     setPresenceMembers({});
-    setLeadUserId(nextLeadUserId);
-    setRoomLocked(locked);
+    setLeadUserId(nextRoom.leadUserId);
+    setRoomLocked(nextRoom.locked);
     setPearMenuOpen(false);
     setExplorerOpen(true);
     setChatOpen(true);
@@ -1241,7 +1243,7 @@ export default function App() {
       type: 'room-closed',
       userId: user.id,
       displayName: user.name,
-      color: user.color,
+      color: DEFAULT_COLOR,
       avatarUrl: user.avatarUrl,
       leadUserId: user.id,
       at: new Date().toISOString()
@@ -1260,7 +1262,7 @@ export default function App() {
       type: 'lock-changed',
       userId: user.id,
       displayName: user.name,
-      color: user.color,
+      color: DEFAULT_COLOR,
       avatarUrl: user.avatarUrl,
       leadUserId: user.id,
       locked: nextLocked,
@@ -1278,7 +1280,7 @@ export default function App() {
       type: 'lead-transferred',
       userId: user.id,
       displayName: user.name,
-      color: user.color,
+      color: DEFAULT_COLOR,
       avatarUrl: user.avatarUrl,
       leadUserId: nextLead.id,
       targetUserId: nextLead.id,
@@ -1295,18 +1297,11 @@ export default function App() {
     }
 
     const path = uniqueFilePath(files.map((file) => file.path), 'new-file', 'txt');
-
-    try {
-      const created = await createFile(currentRoom.workspaceId, path, '', inferLanguage(path));
-      setFiles((current) => mergeFiles(current, [created]).sort(sortByPath));
-      openFileTab(created.id);
-      expandForPath(path);
-    } catch {
-      const local = createLocalFile(path, currentRoom.workspaceId);
-      setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
-      openFileTab(local.id);
-      expandForPath(path);
-    }
+    const workspaceId = crypto.randomUUID(); // Generate a temporary workspace ID for local files
+    const local = createLocalFile(path, workspaceId);
+    setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
+    openFileTab(local.id);
+    expandForPath(path);
   }
 
   async function handleNewFolder() {
@@ -1317,15 +1312,10 @@ export default function App() {
 
     const folderPath = uniqueFolderPath(files.map((file) => file.path), 'new-folder');
     const markerPath = `${folderPath}/.gitkeep`;
-    try {
-      const created = await createFile(currentRoom.workspaceId, markerPath, '', 'plaintext');
-      setFiles((current) => mergeFiles(current, [created]).sort(sortByPath));
-      expandForPath(markerPath);
-    } catch {
-      const local = createLocalFile(markerPath, currentRoom.workspaceId);
-      setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
-      expandForPath(markerPath);
-    }
+    const workspaceId = crypto.randomUUID(); // Generate a temporary workspace ID for local files
+    const local = createLocalFile(markerPath, workspaceId);
+    setFiles((current) => mergeFiles(current, [local]).sort(sortByPath));
+    expandForPath(markerPath);
   }
 
   async function handleUploadInput(input: HTMLInputElement) {
@@ -1385,21 +1375,13 @@ export default function App() {
       return [];
     }
 
-    setSaveState('saving');
-    try {
-      const uploaded = currentRoom.id === FALLBACK_ROOM.id
-        ? candidates.map((candidate) => createLocalFileFromCandidate(candidate, currentRoom.workspaceId))
-        : await uploadWorkspaceFiles(currentRoom.workspaceId, candidates, replaceExisting);
-      applyUploadedFiles(uploaded, replaceExisting, openUploaded);
-      setSaveState(currentRoom.id === FALLBACK_ROOM.id ? 'offline' : 'saved');
-      setLastSavedAt(new Date().toISOString());
-      return uploaded;
-    } catch {
-      const local = candidates.map((candidate) => createLocalFileFromCandidate(candidate, currentRoom.workspaceId));
-      applyUploadedFiles(local, replaceExisting, openUploaded);
-      setSaveState('offline');
-      return local;
-    }
+    setSaveState('offline');
+    // Files are no longer persisted to the server; create local file objects
+    const workspaceId = crypto.randomUUID(); // Generate a temporary workspace ID
+    const local = candidates.map((candidate) => createLocalFileFromCandidate(candidate, workspaceId));
+    applyUploadedFiles(local, replaceExisting, openUploaded);
+    setLastSavedAt(new Date().toISOString());
+    return local;
   }
 
   function applyUploadedFiles(uploaded: WorkspaceFile[], replaceExisting: boolean, openUploaded = true) {
@@ -2018,7 +2000,7 @@ function getOrCreateLocalUser(): Member {
   const user: Member = {
     id,
     name: 'You',
-    color: USER_COLORS[Math.abs(hash(id)) % USER_COLORS.length]
+    color: DEFAULT_COLOR
   };
   localStorage.setItem('pearprogram-user', JSON.stringify(user));
   return user;
