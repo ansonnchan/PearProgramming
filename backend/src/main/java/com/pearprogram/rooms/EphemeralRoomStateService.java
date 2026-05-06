@@ -113,10 +113,11 @@ public class EphemeralRoomStateService {
         );
     }
 
-    public RoomAccessDto roomAccess(String code, String ignoredUserId) {
+    public RoomAccessDto roomAccess(String code, String displayName) {
         boolean locked = isLocked(code);
         int memberCount = activeMemberCount(code);
-        boolean canJoin = roomExists(code) && !locked && memberCount < MAX_ROOM_USERS;
+        boolean isMember = displayName != null && !displayName.isBlank() && memberExists(code, normalizeIdentity(displayName, code));
+        boolean canJoin = roomExists(code) && !locked && (isMember || memberCount < MAX_ROOM_USERS);
         return new RoomAccessDto(canJoin, canJoin ? null : locked ? "locked" : "full", locked, memberCount, MAX_ROOM_USERS, getLeadDisplayName(code));
     }
 

@@ -173,6 +173,7 @@ export default function App() {
   const pendingUploadRef = useRef<{ proposalId: string; candidates: UploadCandidate[]; newFolder: string; openUploaded: boolean } | null>(null);
   const committingProposalRef = useRef<string | null>(null);
   const roomRef = useRef<Room | null>(null);
+  const filesRef = useRef<WorkspaceFile[]>([]);
   const activeFileRef = useRef<WorkspaceFile | null>(null);
   const stompRef = useRef<Client | null>(null);
   const leadUserIdRef = useRef<string | null>(null);
@@ -193,11 +194,14 @@ export default function App() {
     setLandingError('');
     setLandingNotice('');
     try {
-      const access = await getRoomAccess(code, user.id);
+      const access = await getRoomAccess(code, displayName || user.name);
       if (!access.canJoin) {
-        showToast(access.reason === 'locked'
-          ? 'Room is Locked. Contact the room owner if this is a mistake.'
-          : 'Room is Full.');
+        if (access.reason === 'locked') {
+          showToast('Room is Locked. Contact the room owner if this is a mistake.');
+        } else {
+          setLandingError('Room is Full.');
+        }
+        setJoiningRoom(false);
         return;
       }
       await apiJoinRoom(code, displayName);
@@ -392,6 +396,10 @@ export default function App() {
       cancelled = true;
     };
   }, [activeFile, room]);
+
+  useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
 
   useEffect(() => {
     if (!room) {
@@ -1401,7 +1409,20 @@ export default function App() {
       return;
     }
 
-    void persistUploadCandidates(candidates, isSwitch, false);
+    void persistUploadCandidates(candidates, isSwitch, false).then((localFiles) => {
+      if (stompRef.current?.connected && localFiles.length > 0) {
+        publishProjectSwitch({
+          type: 'accepted',
+          proposalId: crypto.randomUUID(),
+          currentFolder: activeProjectName,
+          newFolder,
+          proposerId: user.id,
+          proposerName: user.name,
+          files: localFiles,
+          at: new Date().toISOString()
+        });
+      }
+    });
   }
 
   async function persistUploadCandidates(candidates: UploadCandidate[], replaceExisting: boolean, openUploaded = true) {
@@ -1472,6 +1493,13 @@ export default function App() {
         maybeCommitApprovedSwitch(next);
         return next;
       });
+      return;
+    }
+
+    if (event.type === 'sync') {
+      if (event.targetUserId === user.id && event.files?.length) {
+        applyUploadedFiles(event.files, true, false);
+      }
       return;
     }
 
@@ -1675,6 +1703,23 @@ export default function App() {
           at: new Date().toISOString()
         })
       });
+
+      if (leadUserIdRef.current === user.id && filesRef.current.length > 0) {
+        client.publish({
+          destination: `/app/room/${currentRoom.code}/project-switch`,
+          body: JSON.stringify({
+            type: 'sync',
+            proposalId: crypto.randomUUID(),
+            currentFolder: activeProjectName,
+            newFolder: activeProjectName,
+            proposerId: user.id,
+            proposerName: user.name,
+            targetUserId: event.userId,
+            files: filesRef.current,
+            at: new Date().toISOString()
+          })
+        });
+      }
 
       if (leadUserIdRef.current === user.id) {
         client.publish({

@@ -19,6 +19,7 @@ export type UploadReadResult = {
 
 const MAX_UPLOAD_FILES = 1500;
 const MAX_UPLOAD_BYTES = 500 * 1024;
+//add more extentions for frontend files
 const ALLOWED_EXTENSIONS = new Set([
   'adoc',
   'astro',

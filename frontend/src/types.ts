@@ -93,7 +93,7 @@ export type Member = {
 
 
 export type ProjectSwitchEvent = {
-  type: 'proposed' | 'vote' | 'accepted' | 'declined';
+  type: 'proposed' | 'vote' | 'accepted' | 'declined' | 'sync';
   proposalId: string;
   currentFolder: string;
   newFolder: string;
@@ -101,6 +101,7 @@ export type ProjectSwitchEvent = {
   proposerName: string;
   voterId?: string;
   voterName?: string;
+  targetUserId?: string;
   requiredUserIds?: string[];
   approvedUserIds?: string[];
   files?: WorkspaceFile[];

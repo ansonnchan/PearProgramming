@@ -23,8 +23,8 @@ export async function getRoom(code: string): Promise<Room> {
   return getJson<Room>(`/api/rooms/${encodeURIComponent(code)}`);
 }
 
-export async function getRoomAccess(code: string, userId: string): Promise<RoomAccess> {
-  return getJson<RoomAccess>(`/api/rooms/${encodeURIComponent(code)}/access?userId=${encodeURIComponent(userId)}`);
+export async function getRoomAccess(code: string, displayName: string): Promise<RoomAccess> {
+  return getJson<RoomAccess>(`/api/rooms/${encodeURIComponent(code)}/access?displayName=${encodeURIComponent(displayName)}`);
 }
 
 export async function createWorkspace(name: string): Promise<Workspace> {

@@ -92,7 +92,11 @@ public class RoomEventController {
         MemberEvent outbound = event;
         if ("joined".equals(event.type())) {
             roomStateService.joinRoom(code, event.displayName(), event.color());
-            outbound = withRoomState(event, roomStateService.roomAccess(code, event.displayName()));
+            RoomAccessDto access = roomStateService.roomAccess(code, event.displayName());
+            if (access.leadUserId() == null || access.leadUserId().isBlank()) {
+                access = roomStateService.transferLead(code, event.userId());
+            }
+            outbound = withRoomState(event, access);
             roomService.cancelCleanup(code);
         } else if ("left".equals(event.type())) {
             RoomAccessDto state = roomStateService.leaveRoom(code, event.displayName());
