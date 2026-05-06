@@ -1,11 +1,6 @@
 spring:
   application:
     name: pearprogram-backend
-  datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:h2:file:./data/pearprogram;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH}
-    username: ${SPRING_DATASOURCE_USERNAME:sa}
-    password: ${SPRING_DATASOURCE_PASSWORD:}
-    driver-class-name: ${SPRING_DATASOURCE_DRIVER:org.h2.Driver}
   data:
     redis:
       host: ${SPRING_REDIS_HOST:localhost}
@@ -14,20 +9,6 @@ spring:
       ssl:
         enabled: ${SPRING_REDIS_SSL:false}
       timeout: 750ms
-  flyway:
-    enabled: ${SPRING_FLYWAY_ENABLED:false}
-  h2:
-    console:
-      enabled: true
-      path: /h2-console
-  jpa:
-    hibernate:
-      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
-    open-in-view: false
-    properties:
-      hibernate:
-        jdbc:
-          time_zone: UTC
 server:
   port: ${SERVER_PORT:${PORT:8081}}
 
