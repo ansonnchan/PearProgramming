@@ -36,7 +36,7 @@ public class RoomService {
         String code = allocateCode();
         var createdAt = java.time.OffsetDateTime.now();
         roomStateService.initializeRoom(code, createdAt);
-        log.info("Created Redis room {}", code);
+        log.info("Created room {}", code);
         return new RoomCreateResponse(code, buildJoinUrl(code), createdAt, 0);
     }
 
@@ -99,7 +99,7 @@ public class RoomService {
 
         roomStateService.deleteRoom(normalized);
         pendingCleanup.remove(normalized);
-        log.info("Deleted Redis room {} after last user left", normalized);
+        log.info("Deleted room {} after last user left", normalized);
         return new RoomCleanupDto(normalized, true, "inactive");
     }
 
@@ -112,7 +112,7 @@ public class RoomService {
 
         roomStateService.deleteRoom(normalized);
         pendingCleanup.remove(normalized);
-        log.info("Deleted Redis room {} via close-room event", normalized);
+        log.info("Deleted room {} via close-room event", normalized);
         return new RoomCleanupDto(normalized, true, "closed");
     }
 
