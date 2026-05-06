@@ -36,6 +36,9 @@ public class RoomController {
     @PostMapping("/join")
     public RoomJoinResponse join(@Valid @RequestBody JoinRoomRequest request) {
         log.info("Join room request received for code={}", request.code());
+        if (request.displayName() != null && !request.displayName().isBlank()) {
+            return roomService.joinRoom(request.code(), request.displayName());
+        }
         return roomService.joinRoom(request.code());
     }
 
