@@ -8,13 +8,13 @@ spring:
       password: ${SPRING_REDIS_PASSWORD:}
       ssl:
         enabled: ${SPRING_REDIS_SSL:false}
-      timeout: 2000ms
+      timeout: ${SPRING_REDIS_TIMEOUT:10s}
       lettuce:
         pool:
           max-active: 8
           max-idle: 8
           min-idle: 0
-          max-wait: 1000ms
+          max-wait: ${SPRING_REDIS_POOL_MAX_WAIT:5s}
 server:
   port: ${PORT:${SERVER_PORT:8081}}
 
