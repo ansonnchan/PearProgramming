@@ -4,8 +4,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.Lifecycle;
 import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -18,16 +20,19 @@ public class RealtimeBroadcastListenerManager {
     private static final Logger log = LoggerFactory.getLogger(RealtimeBroadcastListenerManager.class);
 
     private final ObjectProvider<RedisMessageListenerContainer> listenerContainerProvider;
+    private final RedisConnectionFactory redisConnectionFactory;
     private final StringRedisTemplate redisTemplate;
     private final RealtimeBroadcastService broadcastService;
     private final AtomicBoolean failureLogged = new AtomicBoolean(false);
 
     public RealtimeBroadcastListenerManager(
             ObjectProvider<RedisMessageListenerContainer> listenerContainerProvider,
+            RedisConnectionFactory redisConnectionFactory,
             StringRedisTemplate redisTemplate,
             RealtimeBroadcastService broadcastService
     ) {
         this.listenerContainerProvider = listenerContainerProvider;
+        this.redisConnectionFactory = redisConnectionFactory;
         this.redisTemplate = redisTemplate;
         this.broadcastService = broadcastService;
     }
@@ -49,6 +54,7 @@ public class RealtimeBroadcastListenerManager {
         }
 
         try {
+            ensureRedisConnectionFactoryStarted();
             redisTemplate.execute((RedisConnection connection) -> {
                 connection.ping();
                 return null;
@@ -61,6 +67,12 @@ public class RealtimeBroadcastListenerManager {
                 log.warn("Room STOMP Redis broadcast listener is not connected; same-room WebSocket events only reach this backend instance until Redis pub/sub connects. reason={}",
                         rootCauseMessage(ex));
             }
+        }
+    }
+
+    private void ensureRedisConnectionFactoryStarted() {
+        if (redisConnectionFactory instanceof Lifecycle lifecycle && !lifecycle.isRunning()) {
+            lifecycle.start();
         }
     }
 
