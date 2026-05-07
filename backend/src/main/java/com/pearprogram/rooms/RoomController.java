@@ -23,15 +23,21 @@ public class RoomController {
     }
 
     @PostMapping("/create")
-    public RoomCreateResponse create() {
+    public RoomCreateResponse create(@RequestBody(required = false) CreateRoomRequest request) {
         log.info("Create room request received");
-        return roomService.createRoom();
+        if (request == null) {
+            return roomService.createRoom();
+        }
+        return roomService.createRoom(request.sessionId(), request.displayName());
     }
 
     @PostMapping
-    public RoomCreateResponse createLegacy() {
+    public RoomCreateResponse createLegacy(@RequestBody(required = false) CreateRoomRequest request) {
         log.info("Legacy create room request received");
-        return roomService.createRoom();
+        if (request == null) {
+            return roomService.createRoom();
+        }
+        return roomService.createRoom(request.sessionId(), request.displayName());
     }
 
     @PostMapping("/join")

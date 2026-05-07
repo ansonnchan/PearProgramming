@@ -15,6 +15,8 @@ export type UploadReadResult = {
   candidates: UploadCandidate[];
   skipped: SkippedUpload[];
   totalFiles: number;
+  source: 'files' | 'folder';
+  renamedCount: number;
 };
 
 type UploadEntry = {
@@ -178,8 +180,9 @@ export async function readUploadCandidates(fileList: FileList | File[]): Promise
     file,
     path: normalizeUploadPath((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name)
   }));
+  const source = entries.some((entry) => entry.path.includes('/')) ? 'folder' : 'files';
 
-  return readUploadEntries(entries, files.length);
+  return readUploadEntries(entries, files.length, source);
 }
 
 export async function readDroppedUploadCandidates(dataTransfer: DataTransfer): Promise<UploadReadResult> {
@@ -195,16 +198,17 @@ export async function readDroppedUploadCandidates(dataTransfer: DataTransfer): P
     .filter((entry): entry is FileSystemEntry => Boolean(entry));
 
   if (entryItems.length > 0) {
+    const source = entryItems.some((entry) => entry.isDirectory) ? 'folder' : 'files';
     for (const entry of entryItems) {
       entries.push(...await filesFromEntry(entry, ''));
     }
-    return readUploadEntries(entries, entries.length);
+    return readUploadEntries(entries, entries.length, source);
   }
 
   return readUploadCandidates(dataTransfer.files);
 }
 
-async function readUploadEntries(entries: UploadEntry[], totalFiles: number): Promise<UploadReadResult> {
+async function readUploadEntries(entries: UploadEntry[], totalFiles: number, source: UploadReadResult['source']): Promise<UploadReadResult> {
   const skipped: SkippedUpload[] = [];
   const accepted: UploadEntry[] = [];
 
@@ -233,9 +237,10 @@ async function readUploadEntries(entries: UploadEntry[], totalFiles: number): Pr
   }));
 
   return {
-    candidates: dedupeByPath(candidates).sort((a, b) => a.path.localeCompare(b.path)),
+    ...dedupeByPath(candidates),
     skipped,
-    totalFiles
+    totalFiles,
+    source
   };
 }
 
@@ -358,10 +363,38 @@ function fileToDataUrl(file: File) {
 
 function dedupeByPath(candidates: UploadCandidate[]) {
   const byPath = new Map<string, UploadCandidate>();
+  let renamedCount = 0;
   for (const candidate of candidates) {
     if (candidate.path) {
-      byPath.set(candidate.path, candidate);
+      const path = uniqueUploadPath(candidate.path, byPath);
+      if (path !== candidate.path) {
+        renamedCount += 1;
+      }
+      byPath.set(path, { ...candidate, path });
     }
   }
-  return [...byPath.values()];
+  return {
+    candidates: [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)),
+    renamedCount
+  };
+}
+
+function uniqueUploadPath(path: string, existing: Map<string, UploadCandidate>) {
+  if (!existing.has(path)) {
+    return path;
+  }
+
+  const slashIndex = path.lastIndexOf('/');
+  const folder = slashIndex >= 0 ? `${path.slice(0, slashIndex)}/` : '';
+  const name = slashIndex >= 0 ? path.slice(slashIndex + 1) : path;
+  const dotIndex = name.lastIndexOf('.');
+  const base = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+  const extension = dotIndex > 0 ? name.slice(dotIndex) : '';
+  let index = 2;
+  let candidate = `${folder}${base}-${index}${extension}`;
+  while (existing.has(candidate)) {
+    index += 1;
+    candidate = `${folder}${base}-${index}${extension}`;
+  }
+  return candidate;
 }

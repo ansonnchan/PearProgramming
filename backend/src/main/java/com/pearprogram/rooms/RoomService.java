@@ -34,11 +34,22 @@ public class RoomService {
     }
 
     public RoomCreateResponse createRoom() {
+        return createRoom(null, null);
+    }
+
+    public RoomCreateResponse createRoom(String sessionId, String displayName) {
         String code = allocateCode();
         var createdAt = java.time.OffsetDateTime.now();
         roomStateService.initializeRoom(code, createdAt);
+        int memberCount = 0;
+        String normalizedSessionId = sessionId == null ? "" : sessionId.trim();
+        if (!normalizedSessionId.isBlank()) {
+            RoomJoinResponse join = roomStateService.joinRoom(code, normalizedSessionId, normalizedSessionId, displayName, null);
+            roomStateService.transferLead(code, normalizedSessionId);
+            memberCount = join.memberCount();
+        }
         log.info("Created room {}", code);
-        return new RoomCreateResponse(code, buildJoinUrl(code), createdAt, 0);
+        return new RoomCreateResponse(code, buildJoinUrl(code), createdAt, memberCount);
     }
 
     public RoomCreateResponse createRoom(java.util.UUID ignoredWorkspaceId) {

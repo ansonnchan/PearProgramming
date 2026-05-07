@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Download,
   FilePlus2,
   Folder,
   FolderPlus,
@@ -38,6 +39,7 @@ import {
   listFiles,
   STOMP_URL,
   updateFileContent,
+  uploadWorkspaceFiles,
   YJS_URL
 } from './api';
 import { inferLanguage, languageClass } from './language';
@@ -248,7 +250,7 @@ export default function App() {
     } catch (error) {
       console.warn('Join room failed', { apiBaseUrl: API_BASE_URL, code, error });
       setLandingError(error instanceof ApiError && error.status === 404
-        ? `Could not find room ${code}.`
+        ? `Room ${code} was not found. No new room was created.`
         : `Could not join this room. The frontend tried ${API_BASE_URL}.`);
     } finally {
       setJoiningRoom(false);
@@ -260,7 +262,7 @@ export default function App() {
     setLandingError('');
     setLandingNotice('');
     try {
-      const createResponse = await createRoom();
+      const createResponse = await createRoom(user.id, user.name);
       const createdRoom = await getRoom(createResponse.code);
       openRoom(createdRoom, [], true);
     } catch (error) {
@@ -269,7 +271,7 @@ export default function App() {
     } finally {
       setCreatingRoom(false);
     }
-  }, []);
+  }, [user.id, user.name]);
 
   const scheduleAutosave = useCallback((fileId: string, content: string) => {
     const currentRoom = roomRef.current;
@@ -663,16 +665,27 @@ export default function App() {
     providerRef.current?.destroy();
     ydocRef.current?.destroy();
 
+    const model = editor.getModel();
+    if (!model) {
+      return;
+    }
+
+    if (!YJS_URL) {
+      suppressEditorChangeRef.current = true;
+      if (model.getValue() !== currentFile.content) {
+        model.setValue(currentFile.content);
+      }
+      window.setTimeout(() => {
+        suppressEditorChangeRef.current = false;
+      }, 0);
+      setSyncStatus('Yjs offline');
+      setPeerCount(1);
+      return;
+    }
+
     const ydoc = new Y.Doc();
     const provider = new WebsocketProvider(YJS_URL, `${currentRoom.code}/${currentFile.id}`, ydoc);
     const yText = ydoc.getText('monaco');
-
-    const model = editor.getModel();
-    if (!model) {
-      provider.destroy();
-      ydoc.destroy();
-      return;
-    }
 
     const shouldSeedLocalText = currentRoom.code === FALLBACK_ROOM.code || !isUuid(currentFile.id);
     const canSeedSyncedText = currentFile.createdById === user.id && !seedingFileIdsRef.current.has(currentFile.id);
@@ -918,6 +931,9 @@ export default function App() {
               </button>
               <button className="icon-button" onClick={handleNewFolder} type="button" title="New folder">
                 <FolderPlus size={15} />
+              </button>
+              <button className="icon-button" disabled={files.length === 0} onClick={exportWorkspace} type="button" title="Download project">
+                <Download size={15} />
               </button>
               <button className="icon-button panel-minimize-button" onClick={() => setExplorerOpen(false)} type="button" title="Minimize explorer">
                 -
@@ -1371,9 +1387,7 @@ export default function App() {
         })
       });
     } else {
-      const localAiAnnotation = content.toUpperCase().includes('@AI') && activeFile
-        ? createLocalAnnotation(activeFile.id, cursorPosition.line, user.name, room.code)
-        : null;
+      const mentionsAi = content.toUpperCase().includes('@AI');
       setMessages((current) => [
         ...current,
         {
@@ -1384,20 +1398,17 @@ export default function App() {
           ai: false,
           createdAt: new Date().toISOString()
         },
-        ...(content.toUpperCase().includes('@AI')
+        ...(mentionsAi
           ? [{
               id: crypto.randomUUID(),
               userId: null,
               displayName: 'AI',
-              content: `Placeholder AI: I can see ${activeFile?.path ?? 'the active file'} and your cursor near line ${cursorPosition.line}.`,
+              content: 'PearAI is unavailable because realtime chat is disconnected. Reconnect to the room and try again.',
               ai: true,
               createdAt: new Date().toISOString()
             }]
           : [])
       ].slice(-60));
-      if (localAiAnnotation) {
-        setAnnotations((current) => upsertAnnotation(current, localAiAnnotation).slice(-5));
-      }
     }
 
     setChatDraft('');
@@ -1710,7 +1721,7 @@ export default function App() {
     setCreateItemError('');
   }
 
-  function confirmCreateItem() {
+  async function confirmCreateItem() {
     const currentKind = createItemKind;
     const name = createItemName.trim();
     const existingPaths = files.map((file) => file.path);
@@ -1734,14 +1745,14 @@ export default function App() {
 
     if (currentKind === 'file') {
       const workspaceId = crypto.randomUUID();
-      const local = createLocalFile(resolvedPath, workspaceId, user.id);
+      const local = await createWorkspaceFile(workspaceId, resolvedPath, '', user.id);
       applyUploadedFiles([local], false, true);
       queueOrPublishProjectSwitch(createFileTreeEvent([local], false, false));
       openFileTab(local.id);
       expandForPath(resolvedPath);
     } else {
       const workspaceId = crypto.randomUUID();
-      const local = createLocalFile(`${resolvedPath}/.gitkeep`, workspaceId, user.id);
+      const local = await createWorkspaceFile(workspaceId, `${resolvedPath}/.gitkeep`, '', user.id);
       applyUploadedFiles([local], false, false);
       queueOrPublishProjectSwitch(createFileTreeEvent([local], false, false));
       expandForPath(resolvedPath);
@@ -1784,6 +1795,7 @@ export default function App() {
     closeUploadModal();
     const newFolder = projectNameForPaths(candidates.map((file) => file.path));
     const isSwitch = files.length > 0;
+    const openUploaded = uploadResult.source === 'files' && candidates.length === 1;
     const requiredUserIds = humanMembers.map((member) => member.id);
 
     if (isSwitch && requiredUserIds.length > 1 && stompRef.current?.connected) {
@@ -1797,7 +1809,7 @@ export default function App() {
         requiredUserIds,
         approvedUserIds: []
       };
-      pendingUploadRef.current = { proposalId, candidates, newFolder, openUploaded: true };
+      pendingUploadRef.current = { proposalId, candidates, newFolder, openUploaded };
       setPendingSwitch(proposal);
       publishProjectSwitch({
         type: 'proposed',
@@ -1807,7 +1819,7 @@ export default function App() {
       return;
     }
 
-    void persistUploadCandidates(candidates, isSwitch, true).then((localFiles) => {
+    void persistUploadCandidates(candidates, isSwitch, openUploaded).then((localFiles) => {
       if (localFiles.length === 0) {
         return;
       }
@@ -1821,12 +1833,25 @@ export default function App() {
         proposerName: user.name,
         files: localFiles,
         replaceExisting: isSwitch,
-        openUploaded: true,
+        openUploaded,
         at: new Date().toISOString()
       };
 
       queueOrPublishProjectSwitch(acceptedEvent);
     });
+  }
+
+  async function createWorkspaceFile(workspaceId: string, path: string, content: string, createdById: string) {
+    setSaveState('saving');
+    try {
+      const saved = await createFile(workspaceId, path, content, inferLanguage(path));
+      setSaveState('saved');
+      setLastSavedAt(new Date().toISOString());
+      return { ...saved, createdById };
+    } catch {
+      setSaveState('offline');
+      return createLocalFile(path, workspaceId, createdById);
+    }
   }
 
   async function persistUploadCandidates(candidates: UploadCandidate[], replaceExisting: boolean, openUploaded = true) {
@@ -1835,14 +1860,26 @@ export default function App() {
       return [];
     }
 
-    setSaveState('offline');
-    // Files are no longer persisted to the server; create local file objects
-    const workspaceId = crypto.randomUUID(); // Generate a temporary workspace ID
-    const local = candidates.map((candidate) => createLocalFileFromCandidate(candidate, workspaceId, user.id));
-    applyUploadedFiles(local, replaceExisting, openUploaded);
-    void seedYjsDocuments(local);
-    setLastSavedAt(new Date().toISOString());
-    return local;
+    setSaveState('saving');
+    const workspaceId = crypto.randomUUID();
+    try {
+      const persisted = await uploadWorkspaceFiles(workspaceId, candidates, replaceExisting);
+      const uploaded = persisted.length > 0
+        ? persisted.map((file) => ({ ...file, createdById: user.id }))
+        : candidates.map((candidate) => createLocalFileFromCandidate(candidate, workspaceId, user.id));
+      applyUploadedFiles(uploaded, replaceExisting, openUploaded);
+      void seedYjsDocuments(uploaded);
+      setSaveState('saved');
+      setLastSavedAt(new Date().toISOString());
+      return uploaded;
+    } catch {
+      const local = candidates.map((candidate) => createLocalFileFromCandidate(candidate, workspaceId, user.id));
+      applyUploadedFiles(local, replaceExisting, openUploaded);
+      void seedYjsDocuments(local);
+      setSaveState('offline');
+      setLastSavedAt(new Date().toISOString());
+      return local;
+    }
   }
 
   function applyUploadedFiles(uploaded: WorkspaceFile[], replaceExisting: boolean, openUploaded = true) {
@@ -2289,6 +2326,23 @@ export default function App() {
       }
       return next;
     });
+  }
+
+  function exportWorkspace() {
+    const exportable = filesRef.current.filter((file) => basename(file.path) !== '.gitkeep');
+    if (exportable.length === 0) {
+      return;
+    }
+
+    const blob = createZipBlob(exportable);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${safeDownloadName(projectNameForPaths(exportable.map((file) => file.path)))}.zip`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   function clearCursorWidgets(editor: any) {
@@ -2983,18 +3037,6 @@ function upsertAnnotation(current: AiAnnotation[], annotation: AiAnnotation) {
   return [...current.filter((item) => item.id !== annotation.id), annotation];
 }
 
-function createLocalAnnotation(fileId: string, line: number, userName: string, roomCode: string): AiAnnotation {
-  return {
-    id: crypto.randomUUID(),
-    fileId,
-    roomCode,
-    triggeredBy: userName,
-    line: Math.max(1, line),
-    content: `${userName} is working near line ${Math.max(1, line)}. Placeholder AI would compare this against recent diffs before making a concrete suggestion.`,
-    createdAt: new Date().toISOString()
-  };
-}
-
 function createLocalFile(path: string, workspaceId: string, createdById?: string): WorkspaceFile {
   return {
     id: crypto.randomUUID(),
@@ -3114,7 +3156,8 @@ function saveStatusText(state: SaveState, lastSavedAt: string | null) {
   return 'Autosave ready';
 }
 
-function uploadNoticeText(result: UploadReadResult, renamedCount = 0) {
+function uploadNoticeText(result: UploadReadResult) {
+  const renamedCount = result.renamedCount;
   const renameText = renamedCount > 0
     ? ` Renamed ${renamedCount} duplicate file${renamedCount === 1 ? '' : 's'} to avoid overwriting existing files.`
     : '';
@@ -3149,6 +3192,119 @@ function configureFolderInput(input: HTMLInputElement) {
   input.setAttribute('mozdirectory', '');
   input.setAttribute('msdirectory', '');
   input.setAttribute('odirectory', '');
+}
+
+let cachedCrc32Table: Uint32Array | null = null;
+
+function createZipBlob(files: WorkspaceFile[]) {
+  const encoder = new TextEncoder();
+  const localParts: Uint8Array[] = [];
+  const centralParts: Uint8Array[] = [];
+  let offset = 0;
+
+  for (const file of files) {
+    const nameBytes = encoder.encode(normalizeZipPath(file.path));
+    const data = contentBytes(file.content);
+    const crc = crc32(data);
+
+    const localHeader = new Uint8Array(30 + nameBytes.length);
+    const localView = new DataView(localHeader.buffer);
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(4, 20, true);
+    localView.setUint16(6, 0x0800, true);
+    localView.setUint16(8, 0, true);
+    localView.setUint32(14, crc, true);
+    localView.setUint32(18, data.length, true);
+    localView.setUint32(22, data.length, true);
+    localView.setUint16(26, nameBytes.length, true);
+    localHeader.set(nameBytes, 30);
+    localParts.push(localHeader, data);
+
+    const centralHeader = new Uint8Array(46 + nameBytes.length);
+    const centralView = new DataView(centralHeader.buffer);
+    centralView.setUint32(0, 0x02014b50, true);
+    centralView.setUint16(4, 20, true);
+    centralView.setUint16(6, 20, true);
+    centralView.setUint16(8, 0x0800, true);
+    centralView.setUint16(10, 0, true);
+    centralView.setUint32(16, crc, true);
+    centralView.setUint32(20, data.length, true);
+    centralView.setUint32(24, data.length, true);
+    centralView.setUint16(28, nameBytes.length, true);
+    centralView.setUint32(42, offset, true);
+    centralHeader.set(nameBytes, 46);
+    centralParts.push(centralHeader);
+
+    offset += localHeader.length + data.length;
+  }
+
+  const centralOffset = offset;
+  const centralSize = centralParts.reduce((total, part) => total + part.length, 0);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(8, files.length, true);
+  endView.setUint16(10, files.length, true);
+  endView.setUint32(12, centralSize, true);
+  endView.setUint32(16, centralOffset, true);
+
+  return new Blob([...localParts, ...centralParts, end], { type: 'application/zip' });
+}
+
+function normalizeZipPath(path: string) {
+  return path.replace(/\\/g, '/').replace(/^\/+/, '').split('/').filter(Boolean).join('/');
+}
+
+function contentBytes(content: string) {
+  const dataUrlMatch = content.match(/^data:.*?(;base64)?,(.*)$/);
+  if (!dataUrlMatch) {
+    return new TextEncoder().encode(content);
+  }
+
+  const payload = dataUrlMatch[2] ?? '';
+  if (dataUrlMatch[1]) {
+    const binary = atob(payload);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+
+  return new TextEncoder().encode(decodeURIComponent(payload));
+}
+
+function crc32(data: Uint8Array) {
+  const table = getCrc32Table();
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc = (crc >>> 8) ^ table[(crc ^ byte) & 0xff];
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function getCrc32Table() {
+  if (cachedCrc32Table) {
+    return cachedCrc32Table;
+  }
+
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    }
+    table[index] = value >>> 0;
+  }
+  cachedCrc32Table = table;
+  return table;
+}
+
+function safeDownloadName(value: string) {
+  return value
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'pearprogram-project';
 }
 
 function Toast({ message }: { message: string }) {

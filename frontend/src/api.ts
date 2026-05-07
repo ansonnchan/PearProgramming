@@ -31,8 +31,8 @@ export async function createWorkspace(name: string): Promise<Workspace> {
   return postJson<Workspace>('/api/workspaces', { name });
 }
 
-export async function createRoom(): Promise<RoomCreateResponse> {
-  return postJson<RoomCreateResponse>('/api/rooms/create', {});
+export async function createRoom(sessionId?: string, displayName?: string): Promise<RoomCreateResponse> {
+  return postJson<RoomCreateResponse>('/api/rooms/create', { sessionId, displayName });
 }
 
 export async function joinRoom(code: string, sessionId: string, displayName?: string): Promise<RoomJoinResponse> {
@@ -40,23 +40,26 @@ export async function joinRoom(code: string, sessionId: string, displayName?: st
 }
 
 export async function listFiles(workspaceId: string): Promise<WorkspaceFile[]> {
-  // Workspaces are no longer persisted; return empty list
-  return [];
+  return getJson<WorkspaceFile[]>(`/api/workspaces/${encodeURIComponent(workspaceId)}/files`);
 }
 
 export async function createFile(workspaceId: string, path: string, content = '', language?: string): Promise<WorkspaceFile> {
-  // Files are no longer persisted; return null
-  return {} as WorkspaceFile;
+  return postJson<WorkspaceFile>(`/api/workspaces/${encodeURIComponent(workspaceId)}/files`, { path, content, language });
 }
 
 export async function uploadWorkspaceFiles(workspaceId: string, files: UploadCandidate[], replaceExisting: boolean): Promise<WorkspaceFile[]> {
-  // Files are no longer persisted; return empty list
-  return [];
+  return postJson<WorkspaceFile[]>(`/api/workspaces/${encodeURIComponent(workspaceId)}/files/batch`, {
+    replaceExisting,
+    files: files.map((file) => ({
+      path: file.path,
+      language: file.language,
+      content: file.content
+    }))
+  });
 }
 
 export async function updateFileContent(fileId: string, content: string): Promise<WorkspaceFile> {
-  // Files are no longer persisted; return null
-  return {} as WorkspaceFile;
+  return patchJson<WorkspaceFile>(`/api/files/${encodeURIComponent(fileId)}`, { content });
 }
 
 

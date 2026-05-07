@@ -40,7 +40,7 @@ public class AiParticipantService {
 
     public AiParticipantService(
             @Value("${GROQ_API_KEY:}") String groqApiKey,
-            @Value("${pearprogram.ai.placeholder-mode:true}") boolean placeholderMode,
+            @Value("${pearprogram.ai.placeholder-mode:false}") boolean placeholderMode,
             @Value("${GROQ_BASE_URL:https://api.groq.com/openai/v1}") String groqBaseUrl,
             @Value("${GROQ_MODEL:llama-3.3-70b-versatile}") String model,
             @Value("${GROQ_MAX_COMPLETION_TOKENS:220}") int maxCompletionTokens,
@@ -67,7 +67,7 @@ public class AiParticipantService {
     }
 
     public boolean usesPlaceholderResponses() {
-        return placeholderMode || !isConfigured();
+        return placeholderMode && !isConfigured();
     }
 
     public String chatResponse(String displayName, String currentFile) {
@@ -80,6 +80,9 @@ public class AiParticipantService {
             String file = currentFile == null || currentFile.isBlank() ? "the active file" : currentFile;
             return "Placeholder AI: " + user + ", I can see the room context for " + file
                     + ". I would check changed lines, cursor positions, and recent chat before suggesting a concise next step.";
+        }
+        if (!isConfigured()) {
+            return "PearAI is not configured. Set GROQ_API_KEY on the backend, or enable PEARPROGRAM_AI_PLACEHOLDER=true for local demo responses.";
         }
 
         try {

@@ -14,6 +14,7 @@ const ROOM_CLEANUP_ENDPOINT = process.env.ROOM_CLEANUP_ENDPOINT || deriveRoomCle
 const SNAPSHOT_INTERVAL_MS = numberFromEnv('SNAPSHOT_INTERVAL_MS', 30_000);
 const ROOM_TTL_SECONDS = numberFromEnv('ROOM_TTL_SECONDS', 24 * 60 * 60);
 const ROOM_CLEANUP_GRACE_MS = numberFromEnv('ROOM_CLEANUP_GRACE_MS', 120_000);
+const REDIS_KEY_PREFIX = normalizeRedisKeyPrefix(process.env.PEARPROGRAM_REDIS_KEY_PREFIX || process.env.REDIS_KEY_PREFIX || 'pearprogram');
 const REDIS_CONFIG = redisConfigFromEnv();
 
 const hydratedDocs = new Set();
@@ -41,25 +42,33 @@ if (REDIS_CONFIG.enabled) {
 
   log('info', 'Redis configured for Yjs persistence', {
     mode: REDIS_CONFIG.mode,
-    host: REDIS_CONFIG.host,
-    port: REDIS_CONFIG.port,
-    tls: REDIS_CONFIG.tls
+    hostPresent: Boolean(REDIS_CONFIG.host),
+    portPresent: Boolean(REDIS_CONFIG.port),
+    sslEnabled: REDIS_CONFIG.tls,
+    keyPrefix: REDIS_KEY_PREFIX
   });
 
   redis.on('ready', () => {
     redisAvailable = true;
     log('info', 'Redis connected for Yjs persistence', {
       mode: REDIS_CONFIG.mode,
-      host: REDIS_CONFIG.host,
-      port: REDIS_CONFIG.port,
-      tls: REDIS_CONFIG.tls
+      hostPresent: Boolean(REDIS_CONFIG.host),
+      portPresent: Boolean(REDIS_CONFIG.port),
+      sslEnabled: REDIS_CONFIG.tls,
+      keyPrefix: REDIS_KEY_PREFIX
     });
     logMetric('redis_available', 1);
   });
 
   redis.on('error', (error) => {
     if (redisAvailable) {
-      log('warn', 'Redis unavailable for Yjs persistence; continuing with in-memory docs', { error: error.message });
+      log('warn', 'Redis unavailable for Yjs persistence; continuing with in-memory docs', {
+        hostPresent: Boolean(REDIS_CONFIG.host),
+        portPresent: Boolean(REDIS_CONFIG.port),
+        sslEnabled: REDIS_CONFIG.tls,
+        keyPrefix: REDIS_KEY_PREFIX,
+        error: error.message
+      });
     }
     redisAvailable = false;
   });
@@ -68,8 +77,10 @@ if (REDIS_CONFIG.enabled) {
     redisAvailable = false;
     log('warn', 'Redis connection failed on startup; continuing with in-memory docs', {
       mode: REDIS_CONFIG.mode,
-      host: REDIS_CONFIG.host,
-      port: REDIS_CONFIG.port,
+      hostPresent: Boolean(REDIS_CONFIG.host),
+      portPresent: Boolean(REDIS_CONFIG.port),
+      sslEnabled: REDIS_CONFIG.tls,
+      keyPrefix: REDIS_KEY_PREFIX,
       error: error.message
     });
   });
@@ -86,6 +97,7 @@ const server = http.createServer(async (req, res) => {
       status: 'ok',
       redisAvailable,
       redisMode: REDIS_CONFIG.mode,
+      redisKeyPrefix: REDIS_KEY_PREFIX,
       activeDocs: docs.size,
       activeRooms: roomSockets.size
     });
@@ -383,7 +395,12 @@ async function notifyBackendRoomCleanup(roomCode) {
 }
 
 function redisKey(roomCode, fileId) {
-  return `yjs:${roomCode}:${fileId}:updates`;
+  return `${REDIS_KEY_PREFIX}:yjs:${roomCode}:${fileId}:updates`;
+}
+
+function normalizeRedisKeyPrefix(value) {
+  const normalized = String(value || '').trim().replace(/^:+|:+$/g, '');
+  return normalized || 'pearprogram';
 }
 
 function redisConfigFromEnv() {

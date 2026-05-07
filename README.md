@@ -24,7 +24,7 @@ frontend/  Vite + React + TypeScript + Monaco collaborative editor UI
 
 ## Quick Start Without Docker
 
-The default backend profile uses local H2 persistence and placeholder AI behavior, so the app runs without Docker:
+The default backend profile runs without Docker by falling back to in-memory room/file state when Redis is unavailable. PearAI returns a configuration error until `GROQ_API_KEY` is set, unless `PEARPROGRAM_AI_PLACEHOLDER=true` is enabled for local demos:
 
 ```powershell
 cd backend
@@ -43,6 +43,7 @@ The realtime service loads `realtime/.env` automatically when it starts. It uses
 
 ```env
 REDIS_URL=rediss://default:<upstash-token>@<upstash-host>:6379
+REDIS_KEY_PREFIX=pearprogram
 SNAPSHOT_ENDPOINT=http://localhost:8081/internal/files
 ROOM_CLEANUP_ENDPOINT=http://localhost:8081/internal/rooms
 ROOM_CLEANUP_GRACE_MS=120000
@@ -70,7 +71,7 @@ npm run dev
 
 Default local endpoints:
 
-- Frontend: `http://localhost:5173`
+- Frontend: `http://localhost:5174`
 - Spring API/STOMP: `http://localhost:8081`
 - Node Yjs WebSocket: `ws://localhost:1235`
 
@@ -86,11 +87,15 @@ If you are serving the Vite dev app from the host laptop too, start it with `npm
 
 The backend room service is the source of truth for create/join. Room codes are normalized by trimming spaces, removing dashes, and uppercasing before lookup.
 
+Production Redis should use TCP, not REST. The backend accepts either `SPRING_REDIS_URL=rediss://default:<token>@<host>:6379` or `SPRING_REDIS_HOST`/`SPRING_REDIS_PORT`/`SPRING_REDIS_PASSWORD`/`SPRING_REDIS_SSL=true`. Keep `SPRING_REDIS_HEALTH_ENABLED=false` so Redis does not block Render health checks. Both backend room state and realtime Yjs persistence use `PEARPROGRAM_REDIS_KEY_PREFIX`/`REDIS_KEY_PREFIX` with the default prefix `pearprogram`.
+
+For Render, use `/healthz` as a lightweight backend health endpoint. It returns immediately and does not check Redis or other external services.
+
 ## Architecture Notes
 
-Yjs document edits flow only through the Node service. Spring handles STOMP events for chat, cursors, permissions, file-tree sync events, and presence. Redis stores ephemeral room/session state with 24h TTL when configured; otherwise the backend falls back to in-memory room state for local development.
+Yjs document edits flow only through the Node service. Spring handles STOMP events for chat, cursors, permissions, file-tree sync events, and presence. Redis stores ephemeral room/session state with 24h TTL when configured; otherwise the backend falls back to in-memory room state for local development and logs that mode explicitly.
 
-Supabase/PostgreSQL variables are not required by the current local runtime because file metadata and snapshots are not persisted through JPA in this version. Do not add Supabase credentials to `.env.example`; keep any production database credentials in the deployment provider's private environment settings.
+Supabase/PostgreSQL variables are not required by the current local runtime because file metadata and snapshots are held in backend memory for the lifetime of the process. Do not add Supabase credentials to `.env.example`; keep any production database credentials in the deployment provider's private environment settings.
 
 When the last user leaves a room, Spring marks it inactive and schedules cleanup after `ROOM_CLEANUP_GRACE_SECONDS` seconds. The realtime service also waits after the last Yjs websocket closes, flushes snapshots when `SNAPSHOT_ENDPOINT` is configured, removes in-memory Yjs docs for that room, and asks Spring to clean up only if no members reconnected.
 
@@ -99,6 +104,8 @@ When the last user leaves a room, Spring marks it inactive and schedules cleanup
 - The root page lets users create an empty room or join by room code.
 - Rooms start empty. Users add code through New File, New Folder, Upload Files, or Upload Folder.
 - Local uploads are the primary project-loading path. GitHub import scaffolding still exists in the backend, but it is not the primary UI flow.
+- Folder uploads populate the explorer tree without opening every file as a tab. Files open on demand when clicked.
+- The explorer download button exports a ZIP with relative paths preserved.
 - Monaco language highlighting is inferred from file extensions for JavaScript, TypeScript, Python, Java, C, C++, HTML, CSS, JSON, Markdown, SQL, and plaintext fallback.
 - Editor changes autosave through the browser to Spring and continue to sync through the existing Yjs realtime path.
 - If a populated multi-user room switches to another uploaded folder, participants must approve the switch through the room project-switch WebSocket event before files are replaced.

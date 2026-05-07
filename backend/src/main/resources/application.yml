@@ -24,8 +24,10 @@ pearprogram:
   rooms:
     cleanup-grace-seconds: ${ROOM_CLEANUP_GRACE_SECONDS:120}
     cleanup-scan-ms: ${ROOM_CLEANUP_SCAN_MS:5000}
+  redis:
+    key-prefix: ${PEARPROGRAM_REDIS_KEY_PREFIX:pearprogram}
   ai:
-    placeholder-mode: ${PEARPROGRAM_AI_PLACEHOLDER:true}
+    placeholder-mode: ${PEARPROGRAM_AI_PLACEHOLDER:false}
 
 management:
   endpoints:

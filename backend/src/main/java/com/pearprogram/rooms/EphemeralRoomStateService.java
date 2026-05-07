@@ -1,14 +1,17 @@
 package com.pearprogram.rooms;
 
 import jakarta.annotation.PreDestroy;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
+import java.net.URI;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -41,16 +44,48 @@ public class EphemeralRoomStateService {
     private final StringRedisTemplate redisTemplate;
     private final Duration roomStateTtl;
     private final Duration emptyRoomGrace;
+    private final String keyPrefix;
+    private final String redisUrl;
+    private final String redisHost;
+    private final String redisPort;
+    private final boolean redisSslEnabled;
     private final Map<String, LocalRoomState> localRooms = new ConcurrentHashMap<>();
-    private volatile boolean redisAvailable = true;
+    private volatile boolean redisAvailable = false;
 
     public EphemeralRoomStateService(
             StringRedisTemplate redisTemplate,
-            @Value("${pearprogram.rooms.cleanup-grace-seconds:120}") long cleanupGraceSeconds
+            @Value("${pearprogram.rooms.cleanup-grace-seconds:120}") long cleanupGraceSeconds,
+            @Value("${pearprogram.redis.key-prefix:pearprogram}") String keyPrefix,
+            @Value("${SPRING_REDIS_URL:${REDIS_URL:}}") String redisUrl,
+            @Value("${spring.data.redis.host:}") String redisHost,
+            @Value("${spring.data.redis.port:}") String redisPort,
+            @Value("${spring.data.redis.ssl.enabled:false}") boolean redisSslEnabled
     ) {
         this.redisTemplate = redisTemplate;
         this.roomStateTtl = Duration.ofHours(24);
         this.emptyRoomGrace = Duration.ofSeconds(Math.max(30, cleanupGraceSeconds));
+        this.keyPrefix = normalizeKeyPrefix(keyPrefix);
+        this.redisUrl = redisUrl == null ? "" : redisUrl.trim();
+        this.redisHost = redisHost == null ? "" : redisHost.trim();
+        this.redisPort = redisPort == null ? "" : redisPort.trim();
+        this.redisSslEnabled = redisSslEnabled;
+    }
+
+    @PostConstruct
+    void diagnoseRedisStartup() {
+        RedisEndpoint endpoint = redisEndpoint();
+        log.info("Redis room state startup diagnostics: urlConfigured={}, hostPresent={}, portPresent={}, sslEnabled={}, keyPrefix={}",
+                !redisUrl.isBlank(), endpoint.hostPresent(), endpoint.portPresent(), endpoint.sslEnabled(), keyPrefix);
+        try {
+            String pong = redisTemplate.execute((RedisCallback<String>) (connection) -> connection.ping());
+            redisAvailable = true;
+            log.info("Room state is Redis-backed. ping={}, host={}, port={}, sslEnabled={}, keyPrefix={}",
+                    pong, endpoint.safeHost(), endpoint.safePort(), endpoint.sslEnabled(), keyPrefix);
+        } catch (RuntimeException ex) {
+            redisAvailable = false;
+            log.warn("Room state is using in-memory fallback. Redis connection failed: {} hostPresent={} portPresent={} sslEnabled={} keyPrefix={}",
+                    rootCauseMessage(ex), endpoint.hostPresent(), endpoint.portPresent(), endpoint.sslEnabled(), keyPrefix);
+        }
     }
 
     public boolean reserveRoomCode(String code) {
@@ -745,14 +780,15 @@ public class EphemeralRoomStateService {
 
     private Set<String> findKnownRoomCodes() {
         Set<String> codes = new HashSet<>();
-        Set<String> keys = redisTemplate.keys("room:*:count");
+        Set<String> keys = redisTemplate.keys(prefixedKey("room:*:count"));
         if (keys == null) {
             return codes;
         }
 
+        String prefix = prefixedKey("room:");
         for (String key : keys) {
-            if (key != null && key.endsWith(":count")) {
-                codes.add(key.substring(5, key.length() - 6));
+            if (key != null && key.startsWith(prefix) && key.endsWith(":count")) {
+                codes.add(key.substring(prefix.length(), key.length() - 6));
             }
         }
         return codes;
@@ -771,27 +807,60 @@ public class EphemeralRoomStateService {
     }
 
     private String roomMetaKey(String code) {
-        return "room:" + code;
+        return prefixedKey("room:" + code);
     }
 
     private String roomCountKey(String code) {
-        return "room:" + code + ":count";
+        return prefixedKey("room:" + code + ":count");
     }
 
     private String roomMembersKey(String code) {
-        return "room:" + code + ":members";
+        return prefixedKey("room:" + code + ":members");
     }
 
     private String roomRecentMembersKey(String code) {
-        return "room:" + code + ":recent-members";
+        return prefixedKey("room:" + code + ":recent-members");
     }
 
     private String roomAnnotationsKey(String code) {
-        return "room:" + code + ":annotations";
+        return prefixedKey("room:" + code + ":annotations");
     }
 
     private String roomColorCursorKey(String code) {
-        return "room:" + code + ":color-cursor";
+        return prefixedKey("room:" + code + ":color-cursor");
+    }
+
+    private String prefixedKey(String key) {
+        return keyPrefix + ":" + key;
+    }
+
+    private String normalizeKeyPrefix(String rawPrefix) {
+        String normalized = rawPrefix == null ? "" : rawPrefix.trim().replaceAll("^:+|:+$", "");
+        return normalized.isBlank() ? "pearprogram" : normalized;
+    }
+
+    private RedisEndpoint redisEndpoint() {
+        if (!redisUrl.isBlank()) {
+            try {
+                URI uri = URI.create(redisUrl);
+                String host = uri.getHost() == null ? "" : uri.getHost();
+                String port = uri.getPort() > 0 ? Integer.toString(uri.getPort()) : "6379";
+                boolean sslEnabled = "rediss".equalsIgnoreCase(uri.getScheme());
+                return new RedisEndpoint(host, port, sslEnabled);
+            } catch (RuntimeException ignored) {
+                return new RedisEndpoint("", "", redisSslEnabled);
+            }
+        }
+        return new RedisEndpoint(redisHost, redisPort, redisSslEnabled);
+    }
+
+    private String rootCauseMessage(RuntimeException ex) {
+        Throwable current = ex;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
     }
 
     private LocalRoomState localState(String code) {
@@ -804,7 +873,8 @@ public class EphemeralRoomStateService {
                 return redisAction.get();
             } catch (RuntimeException ex) {
                 redisAvailable = false;
-                log.warn("Redis unavailable; falling back to in-memory room state. {}", ex.getMessage());
+                log.warn("Redis unavailable; switching room state to in-memory fallback. Existing Redis-backed rooms may not be visible from this instance. {}",
+                        rootCauseMessage(ex));
             }
         }
 
@@ -812,6 +882,24 @@ public class EphemeralRoomStateService {
     }
 
     public record ActiveMember(String userId, String displayName, String cursorColor) {
+    }
+
+    private record RedisEndpoint(String host, String port, boolean sslEnabled) {
+        boolean hostPresent() {
+            return host != null && !host.isBlank();
+        }
+
+        boolean portPresent() {
+            return port != null && !port.isBlank();
+        }
+
+        String safeHost() {
+            return hostPresent() ? host : "<missing>";
+        }
+
+        String safePort() {
+            return portPresent() ? port : "<missing>";
+        }
     }
 
     private static final class LocalRoomState {
