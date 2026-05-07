@@ -11,6 +11,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,16 +21,19 @@ public class RoomService {
     private static final Logger log = LoggerFactory.getLogger(RoomService.class);
     private final RoomCodeGenerator roomCodeGenerator;
     private final EphemeralRoomStateService roomStateService;
+    private final RoomProjectStateService projectStateService;
     private final Duration cleanupGrace;
     private final Map<String, Instant> pendingCleanup = new ConcurrentHashMap<>();
 
     public RoomService(
             RoomCodeGenerator roomCodeGenerator,
             EphemeralRoomStateService roomStateService,
+            RoomProjectStateService projectStateService,
             @Value("${pearprogram.rooms.cleanup-grace-seconds:120}") long cleanupGraceSeconds
     ) {
         this.roomCodeGenerator = roomCodeGenerator;
         this.roomStateService = roomStateService;
+        this.projectStateService = projectStateService;
         this.cleanupGrace = Duration.ofSeconds(Math.max(30, cleanupGraceSeconds));
     }
 
@@ -66,6 +70,18 @@ public class RoomService {
         String normalized = normalizeRoomCode(code);
         ensureRoomExists(normalized);
         return roomStateService.roomAccess(normalized, sessionId, displayName);
+    }
+
+    public List<Map<String, Object>> getRoomFiles(String code) {
+        String normalized = normalizeRoomCode(code);
+        ensureRoomExists(normalized);
+        return projectStateService.getFiles(normalized);
+    }
+
+    public List<Map<String, Object>> saveRoomFiles(String code, List<Map<String, Object>> files) {
+        String normalized = normalizeRoomCode(code);
+        ensureRoomExists(normalized);
+        return projectStateService.saveFiles(normalized, files);
     }
 
     public RoomJoinResponse joinRoom(String code) {
@@ -128,6 +144,7 @@ public class RoomService {
         }
 
         roomStateService.deleteRoom(normalized);
+        projectStateService.deleteFiles(normalized);
         pendingCleanup.remove(normalized);
         log.info("Deleted room {} after last user left", normalized);
         return new RoomCleanupDto(normalized, true, "inactive");
@@ -141,6 +158,7 @@ public class RoomService {
         }
 
         roomStateService.deleteRoom(normalized);
+        projectStateService.deleteFiles(normalized);
         pendingCleanup.remove(normalized);
         log.info("Deleted room {} via close-room event", normalized);
         return new RoomCleanupDto(normalized, true, "closed");

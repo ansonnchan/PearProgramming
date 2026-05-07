@@ -9,11 +9,22 @@ export const API_BASE_URL = getRequiredUrlEnv('VITE_API_URL', {
 export const STOMP_URL = getRequiredUrlEnv('VITE_STOMP_URL', {
   allowedProtocols: ['http:', 'https:']
 });
-export const YJS_URL = getOptionalUrlEnv('VITE_YJS_URL', {
-  allowedProtocols: ['ws:', 'wss:']
-});
+const rawYjsUrl = import.meta.env.PROD
+  ? getRequiredUrlEnv('VITE_YJS_URL', { allowedProtocols: ['ws:', 'wss:', 'http:', 'https:'] })
+  : getOptionalUrlEnv('VITE_YJS_URL', { allowedProtocols: ['ws:', 'wss:', 'http:', 'https:'] });
+export const YJS_URL = rawYjsUrl ? toWebSocketUrl(rawYjsUrl) : '';
 
 logResolvedFrontendEnv({ apiUrl: API_BASE_URL, stompUrl: STOMP_URL, yjsUrl: YJS_URL });
+
+function toWebSocketUrl(value: string) {
+  const parsed = new URL(value);
+  if (parsed.protocol === 'https:') {
+    parsed.protocol = 'wss:';
+  } else if (parsed.protocol === 'http:') {
+    parsed.protocol = 'ws:';
+  }
+  return parsed.toString().replace(/\/+$/, '');
+}
 
 export class ApiError extends Error {
   status: number;
@@ -47,6 +58,14 @@ export async function createRoom(sessionId?: string, displayName?: string): Prom
 
 export async function joinRoom(code: string, sessionId: string, displayName?: string): Promise<RoomJoinResponse> {
   return postJson<RoomJoinResponse>('/api/rooms/join', { code, sessionId, displayName });
+}
+
+export async function getRoomFiles(code: string): Promise<WorkspaceFile[]> {
+  return getJson<WorkspaceFile[]>(`/api/rooms/${encodeURIComponent(code)}/files`);
+}
+
+export async function saveRoomFiles(code: string, files: WorkspaceFile[]): Promise<WorkspaceFile[]> {
+  return putJson<WorkspaceFile[]>(`/api/rooms/${encodeURIComponent(code)}/files`, { files });
 }
 
 export async function listFiles(workspaceId: string): Promise<WorkspaceFile[]> {
@@ -107,6 +126,18 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   });
   if (!response.ok) {
     throw await toApiError('POST', path, response);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw await toApiError('PUT', path, response);
   }
   return response.json() as Promise<T>;
 }

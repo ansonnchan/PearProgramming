@@ -6,10 +6,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/rooms")
@@ -59,5 +63,18 @@ public class RoomController {
     public RoomAccessDto access(@PathVariable String code, @RequestParam(required = false) String sessionId, @RequestParam(required = false) String displayName) {
         log.info("Room access request for code={}, sessionId={}, displayName={}", code, sessionId, displayName);
         return roomService.getRoomAccess(code, sessionId, displayName);
+    }
+
+    @GetMapping("/{code}/files")
+    public List<Map<String, Object>> files(@PathVariable String code) {
+        log.info("Room files request for code={}", code);
+        return roomService.getRoomFiles(code);
+    }
+
+    @PutMapping("/{code}/files")
+    public List<Map<String, Object>> saveFiles(@PathVariable String code, @RequestBody RoomFilesRequest request) {
+        int count = request == null || request.files() == null ? 0 : request.files().size();
+        log.info("Save room files request for code={} count={}", code, count);
+        return roomService.saveRoomFiles(code, request == null ? List.of() : request.files());
     }
 }

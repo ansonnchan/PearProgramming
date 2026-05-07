@@ -93,7 +93,7 @@ For Render, use `/healthz` as a lightweight backend health endpoint. It returns 
 
 ## Architecture Notes
 
-Yjs document edits flow only through the Node service. Spring handles STOMP events for chat, cursors, permissions, file-tree sync events, and presence. Redis stores ephemeral room/session state with 24h TTL when configured; otherwise the backend falls back to in-memory room state for local development and logs that mode explicitly. In production, Redis also fans out Spring room events and Yjs updates across service instances so two users in the same room do not split by backend instance.
+Yjs document edits flow only through the Node service. Spring handles STOMP events for chat, cursors, permissions, file-tree sync events, and presence. Redis stores ephemeral room/session state with 24h TTL when configured; otherwise the backend falls back to in-memory room state for local development and logs that mode explicitly. In production, Redis also stores the current room file snapshot and fans out Spring room events and Yjs updates across service instances so two users in the same room do not split by backend instance.
 
 Supabase/PostgreSQL variables are not required by the current local runtime because file metadata and snapshots are held in backend memory for the lifetime of the process. Do not add Supabase credentials to `.env.example`; keep any production database credentials in the deployment provider's private environment settings.
 

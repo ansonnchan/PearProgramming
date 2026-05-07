@@ -32,12 +32,13 @@ import {
   createWorkspace,
   dismissAnnotation,
   getRoom,
+  getRoomFiles,
   getRoomAccess,
   joinRoom as apiJoinRoom,
   listAnnotations,
   listChatHistory,
-  listFiles,
   STOMP_URL,
+  saveRoomFiles,
   updateFileContent,
   uploadWorkspaceFiles,
   YJS_URL
@@ -246,7 +247,8 @@ export default function App() {
       }
       await apiJoinRoom(code, user.id, displayName);
       const joinedRoom = await getRoom(code);
-      openRoom(joinedRoom, [], replaceUrl);
+      const roomFiles = await getRoomFiles(code).catch(() => []);
+      openRoom(joinedRoom, roomFiles, replaceUrl);
     } catch (error) {
       console.warn('Join room failed', { apiBaseUrl: API_BASE_URL, code, error });
       setLandingError(error instanceof ApiError && error.status === 404
@@ -418,7 +420,8 @@ export default function App() {
       void (async () => {
         try {
           const freshRoom = await getRoom(savedSession.room.code);
-          openRoom(freshRoom, savedSession.files, false, savedSession);
+          const roomFiles = await getRoomFiles(savedSession.room.code).catch(() => savedSession.files);
+          openRoom(freshRoom, roomFiles.length > 0 ? roomFiles : savedSession.files, false, savedSession);
         } catch {
           clearRoomSession();
           if (joinCode) {
@@ -1332,9 +1335,12 @@ export default function App() {
     const nextActiveFileId = restoredState?.activeFileId && sortedFiles.some((file) => file.id === restoredState.activeFileId)
       ? restoredState.activeFileId
       : nextOpenFileIds[0] ?? fallbackOpenFileId;
+    filesRef.current = sortedFiles;
+    openFileIdsRef.current = nextOpenFileIds.length > 0 ? nextOpenFileIds : nextActiveFileId ? [nextActiveFileId] : [];
+    activeFileIdRef.current = nextActiveFileId;
     setRoom(nextRoom);
     setFiles(sortedFiles);
-    setOpenFileIds(nextOpenFileIds.length > 0 ? nextOpenFileIds : nextActiveFileId ? [nextActiveFileId] : []);
+    setOpenFileIds(openFileIdsRef.current);
     setActiveFileId(nextActiveFileId);
     setExpandedFolders(restoredState ? new Set(restoredState.expandedFolderPaths) : foldersForPaths(sortedFiles.map((file) => file.path)));
     setMessages([]);
@@ -1747,15 +1753,17 @@ export default function App() {
     if (currentKind === 'file') {
       const workspaceId = crypto.randomUUID();
       const local = await createWorkspaceFile(workspaceId, resolvedPath, '', user.id);
-      applyUploadedFiles([local], false, true);
-      queueOrPublishProjectSwitch(createFileTreeEvent([local], false, false));
+      const nextFiles = applyUploadedFiles([local], false, true);
+      persistRoomFilesSnapshot(nextFiles);
+      queueOrPublishProjectSwitch(createFileTreeEvent(nextFiles, false, false));
       openFileTab(local.id);
       expandForPath(resolvedPath);
     } else {
       const workspaceId = crypto.randomUUID();
       const local = await createWorkspaceFile(workspaceId, `${resolvedPath}/.gitkeep`, '', user.id);
-      applyUploadedFiles([local], false, false);
-      queueOrPublishProjectSwitch(createFileTreeEvent([local], false, false));
+      const nextFiles = applyUploadedFiles([local], false, false);
+      persistRoomFilesSnapshot(nextFiles);
+      queueOrPublishProjectSwitch(createFileTreeEvent(nextFiles, false, false));
       expandForPath(resolvedPath);
     }
 
@@ -1868,45 +1876,57 @@ export default function App() {
       const uploaded = persisted.length > 0
         ? persisted.map((file) => ({ ...file, createdById: user.id }))
         : candidates.map((candidate) => createLocalFileFromCandidate(candidate, workspaceId, user.id));
-      applyUploadedFiles(uploaded, replaceExisting, openUploaded);
+      const nextFiles = applyUploadedFiles(uploaded, replaceExisting, openUploaded);
+      persistRoomFilesSnapshot(nextFiles);
       void seedYjsDocuments(uploaded);
       setSaveState('saved');
       setLastSavedAt(new Date().toISOString());
-      return uploaded;
+      return nextFiles;
     } catch {
       const local = candidates.map((candidate) => createLocalFileFromCandidate(candidate, workspaceId, user.id));
-      applyUploadedFiles(local, replaceExisting, openUploaded);
+      const nextFiles = applyUploadedFiles(local, replaceExisting, openUploaded);
+      persistRoomFilesSnapshot(nextFiles);
       void seedYjsDocuments(local);
       setSaveState('offline');
       setLastSavedAt(new Date().toISOString());
-      return local;
+      return nextFiles;
     }
   }
 
   function applyUploadedFiles(uploaded: WorkspaceFile[], replaceExisting: boolean, openUploaded = true) {
-    setFiles((current) => {
-      const next = (replaceExisting ? uploaded : mergeFiles(current, uploaded)).sort(sortByPath);
-      const nextFileIds = new Set(next.map((file) => file.id));
-      const uploadedIds = uploaded.map((file) => file.id).filter((fileId) => nextFileIds.has(fileId));
-      const retainedOpenIds = openFileIdsRef.current.filter((fileId) => nextFileIds.has(fileId));
-      const nextOpenIds = openUploaded
-        ? replaceExisting
-          ? uploadedIds
-          : uniqueStrings([...retainedOpenIds, ...uploadedIds])
-        : replaceExisting
-          ? []
-          : retainedOpenIds;
-      const fallbackOpenIds = openUploaded && nextOpenIds.length === 0 && next[0] ? [next[0].id] : nextOpenIds;
-      const nextActiveId = openUploaded
-        ? uploadedIds[0] ?? fallbackOpenIds[0] ?? null
-        : fallbackOpenIds.includes(activeFileIdRef.current ?? '') ? activeFileIdRef.current : null;
-      filesRef.current = next;
-      openFileIdsRef.current = fallbackOpenIds;
-      activeFileIdRef.current = nextActiveId;
-      setOpenFileIds(fallbackOpenIds);
-      setActiveFileId(nextActiveId);
-      setExpandedFolders(foldersForPaths(next.map((file) => file.path)));
-      return next;
+    const next = (replaceExisting ? uploaded : mergeFiles(filesRef.current, uploaded)).sort(sortByPath);
+    const nextFileIds = new Set(next.map((file) => file.id));
+    const uploadedIds = uploaded.map((file) => file.id).filter((fileId) => nextFileIds.has(fileId));
+    const retainedOpenIds = openFileIdsRef.current.filter((fileId) => nextFileIds.has(fileId));
+    const nextOpenIds = openUploaded
+      ? replaceExisting
+        ? uploadedIds
+        : uniqueStrings([...retainedOpenIds, ...uploadedIds])
+      : replaceExisting
+        ? []
+        : retainedOpenIds;
+    const fallbackOpenIds = openUploaded && nextOpenIds.length === 0 && next[0] ? [next[0].id] : nextOpenIds;
+    const nextActiveId = openUploaded
+      ? uploadedIds[0] ?? fallbackOpenIds[0] ?? null
+      : fallbackOpenIds.includes(activeFileIdRef.current ?? '') ? activeFileIdRef.current : null;
+    filesRef.current = next;
+    openFileIdsRef.current = fallbackOpenIds;
+    activeFileIdRef.current = nextActiveId;
+    setFiles(next);
+    setOpenFileIds(fallbackOpenIds);
+    setActiveFileId(nextActiveId);
+    setExpandedFolders(foldersForPaths(next.map((file) => file.path)));
+    return next;
+  }
+
+  function persistRoomFilesSnapshot(nextFiles: WorkspaceFile[]) {
+    const currentRoom = roomRef.current;
+    if (!currentRoom || currentRoom.code === FALLBACK_ROOM.code) {
+      return;
+    }
+
+    void saveRoomFiles(currentRoom.code, nextFiles).catch((error) => {
+      console.warn('Room file snapshot save failed', { roomCode: currentRoom.code, error });
     });
   }
 
@@ -1993,14 +2013,16 @@ export default function App() {
 
     if (event.type === 'sync') {
       if (event.targetUserId === user.id && event.files?.length) {
-        applyUploadedFiles(event.files, event.replaceExisting ?? true, event.openUploaded ?? false);
+        const nextFiles = applyUploadedFiles(event.files, event.replaceExisting ?? true, event.openUploaded ?? false);
+        persistRoomFilesSnapshot(nextFiles);
       }
       return;
     }
 
     if (event.type === 'accepted') {
       if (event.files?.length && event.proposerId !== user.id) {
-        applyUploadedFiles(event.files, event.replaceExisting ?? true, event.openUploaded ?? false);
+        const nextFiles = applyUploadedFiles(event.files, event.replaceExisting ?? true, event.openUploaded ?? false);
+        persistRoomFilesSnapshot(nextFiles);
       }
       pendingUploadRef.current = null;
       committingProposalRef.current = null;
