@@ -13,6 +13,7 @@ import {
   ImagePlus,
   MessageSquare,
   Send,
+  Trash2,
   Upload,
   UserRound,
   Wifi,
@@ -29,7 +30,6 @@ import {
   ApiError,
   createFile,
   createRoom,
-  createWorkspace,
   dismissAnnotation,
   getRoom,
   getRoomFiles,
@@ -53,6 +53,8 @@ import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEve
 const DEFAULT_COLOR = '#000000';
 const ROOM_SESSION_STORAGE_KEY = 'pearprogram-room-session';
 const CONNECTION_SESSION_STORAGE_KEY = 'pearprogram-connection-session';
+const BACKEND_WAKE_URL = buildWakeUrl(API_BASE_URL, '/healthz');
+const REALTIME_WAKE_URL = YJS_URL ? buildWakeUrl(webSocketToHttpUrl(YJS_URL), '/health') : '';
 
 const FALLBACK_ROOM: Room = {
   code: 'LOCAL1',
@@ -221,6 +223,7 @@ export default function App() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const entryAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const bootstrappedRoomRef = useRef(false);
+  const pageUnloadingRef = useRef(false);
 
   const handleJoinRoom = useCallback(async (rawCode: string, displayName?: string, replaceUrl = true) => {
     const code = normalizeRoomCode(rawCode);
@@ -417,20 +420,14 @@ export default function App() {
     const joinCode = getJoinCode();
     const savedSession = loadRoomSession();
     if (savedSession?.room?.code && (!joinCode || normalizeRoomCode(joinCode) === savedSession.room.code)) {
+      openRoom(savedSession.room, savedSession.files, false, savedSession);
       void (async () => {
         try {
           const freshRoom = await getRoom(savedSession.room.code);
           const roomFiles = await getRoomFiles(savedSession.room.code).catch(() => savedSession.files);
           openRoom(freshRoom, roomFiles.length > 0 ? roomFiles : savedSession.files, false, savedSession);
         } catch {
-          clearRoomSession();
-          if (joinCode) {
-            const normalized = normalizeRoomCode(joinCode);
-            setLandingCode(normalized);
-            requestRoomEntry('join', normalized);
-          } else {
-            returnToLanding('The room expired.');
-          }
+          showToast('Restored your room locally while the hosted services reconnect.');
         }
       })();
       return;
@@ -602,7 +599,7 @@ export default function App() {
         window.clearInterval(heartbeatTimerRef.current);
         heartbeatTimerRef.current = null;
       }
-      if (client.connected) {
+      if (!pageUnloadingRef.current && client.connected) {
         const currentUser = userRef.current;
         client.publish({
           destination: `/app/room/${room.code}/members`,
@@ -627,34 +624,13 @@ export default function App() {
   }, [connectionId, room]);
 
   useEffect(() => {
-    const handlePageHide = () => {
-      const currentRoom = roomRef.current;
-      const client = stompRef.current;
-      const currentUser = userRef.current;
-      if (!currentRoom || !client?.connected) {
-        return;
-      }
-
-      client.publish({
-        destination: `/app/room/${currentRoom.code}/members`,
-        body: JSON.stringify({
-          type: 'left',
-          userId: currentUser.id,
-          sessionId: currentUser.id,
-          connectionId,
-          displayName: currentUser.name,
-          color: currentUser.color,
-          avatarUrl: currentUser.avatarUrl,
-          leadUserId: leadUserIdRef.current,
-          locked: roomLockedRef.current,
-          at: new Date().toISOString()
-        })
-      });
+    const handleBeforeUnload = () => {
+      pageUnloadingRef.current = true;
     };
 
-    window.addEventListener('pagehide', handlePageHide);
-    return () => window.removeEventListener('pagehide', handlePageHide);
-  }, [connectionId]);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -667,68 +643,143 @@ export default function App() {
     bindingRef.current?.destroy();
     providerRef.current?.destroy();
     ydocRef.current?.destroy();
+    bindingRef.current = null;
+    providerRef.current = null;
+    ydocRef.current = null;
 
     const model = editor.getModel();
     if (!model) {
       return;
     }
 
-    if (!YJS_URL) {
-      suppressEditorChangeRef.current = true;
-      if (model.getValue() !== currentFile.content) {
-        model.setValue(currentFile.content);
-      }
-      window.setTimeout(() => {
-        suppressEditorChangeRef.current = false;
+    let disposed = false;
+    const suppressionTimers: number[] = [];
+    const releaseSuppressionSoon = () => {
+      const timer = window.setTimeout(() => {
+        if (!disposed) {
+          suppressEditorChangeRef.current = false;
+        }
       }, 0);
+      suppressionTimers.push(timer);
+    };
+    const setModelContent = (content: string) => {
+      suppressEditorChangeRef.current = true;
+      if (model.getValue() !== content) {
+        model.setValue(content);
+      }
+      releaseSuppressionSoon();
+    };
+
+    setModelContent(currentFile.content);
+
+    if (!YJS_URL) {
       setSyncStatus('Yjs offline');
       setPeerCount(1);
-      return;
+      return () => {
+        disposed = true;
+        suppressionTimers.forEach((timer) => window.clearTimeout(timer));
+        suppressEditorChangeRef.current = false;
+      };
     }
 
     const ydoc = new Y.Doc();
     const provider = new WebsocketProvider(YJS_URL, `${currentRoom.code}/${currentFile.id}`, ydoc);
     const yText = ydoc.getText('monaco');
+    const yMeta = ydoc.getMap('meta');
 
     const shouldSeedLocalText = currentRoom.code === FALLBACK_ROOM.code || !isUuid(currentFile.id);
-    const canSeedSyncedText = currentFile.createdById === user.id && !seedingFileIdsRef.current.has(currentFile.id);
-    if (shouldSeedLocalText && yText.length === 0 && currentFile.content) {
-      yText.insert(0, currentFile.content);
+    if (shouldSeedLocalText && !yMeta.get('initialized')) {
+      ydoc.transact(() => {
+        if (yText.length === 0 && currentFile.content) {
+          yText.insert(0, currentFile.content);
+        }
+        yMeta.set('initialized', true);
+      }, 'pear-local-seed');
     }
 
-    suppressEditorChangeRef.current = true;
-    const binding = new MonacoBinding(yText, model, new Set([editor]), provider.awareness);
-    const suppressTimer = window.setTimeout(() => {
-      suppressEditorChangeRef.current = false;
-    }, 0);
-    provider.awareness.setLocalStateField('user', { name: user.name, color: user.color, avatarUrl: user.avatarUrl });
-    provider.on('status', ({ status }: { status: string }) => {
-      setSyncStatus(status === 'connected' ? 'Yjs synced' : 'Yjs reconnecting');
-    });
-    let seededAfterSync = false;
-    const seedEmptySyncedDoc = (synced: boolean) => {
-      if (!synced || seededAfterSync || shouldSeedLocalText || !canSeedSyncedText || yText.length > 0 || !currentFile.content) {
+    let binding: MonacoBinding | null = null;
+    const syncFileStateFromModel = () => {
+      const content = model.getValue();
+      const current = filesRef.current.find((file) => file.id === currentFile.id);
+      if (!current || current.content === content) {
         return;
       }
-      seededAfterSync = true;
-      yText.insert(0, currentFile.content);
+      const updatedAt = new Date().toISOString();
+      filesRef.current = filesRef.current.map((file) => (
+        file.id === currentFile.id ? { ...file, content, updatedAt } : file
+      ));
+      setFiles((items) => items.map((file) => (
+        file.id === currentFile.id ? { ...file, content, updatedAt } : file
+      )));
     };
-    provider.on('sync', seedEmptySyncedDoc);
+    const seedSyncedTextIfNeeded = () => {
+      if (yMeta.get('initialized')) {
+        return;
+      }
+      const seedContent = model.getValue();
+      ydoc.transact(() => {
+        if (yText.length === 0 && seedContent) {
+          yText.insert(0, seedContent);
+        }
+        yMeta.set('initialized', true);
+      }, 'pear-synced-seed');
+    };
+    const attachBinding = () => {
+      if (disposed || binding) {
+        return;
+      }
+      seedSyncedTextIfNeeded();
+      suppressEditorChangeRef.current = true;
+      binding = new MonacoBinding(yText, model, new Set([editor]), provider.awareness);
+      bindingRef.current = binding;
+      syncFileStateFromModel();
+      releaseSuppressionSoon();
+      setSyncStatus('Yjs synced');
+    };
+
+    provider.awareness.setLocalStateField('user', { name: user.name, color: user.color, avatarUrl: user.avatarUrl });
+    const handleStatus = ({ status }: { status: string }) => {
+      setSyncStatus(status === 'connected' ? (binding ? 'Yjs synced' : 'Yjs syncing') : 'Yjs reconnecting');
+    };
+    provider.on('status', handleStatus);
+    const handleSync = (synced: boolean) => {
+      if (!synced) {
+        return;
+      }
+      attachBinding();
+    };
+    provider.on('sync', handleSync);
     const updatePeerCount = () => setPeerCount(provider.awareness.getStates().size);
     provider.awareness.on('change', updatePeerCount);
 
-    bindingRef.current = binding;
     providerRef.current = provider;
     ydocRef.current = ydoc;
+    setSyncStatus('Yjs connecting');
+    updatePeerCount();
+
+    if ((provider as unknown as { synced?: boolean }).synced) {
+      attachBinding();
+    }
 
     return () => {
-      window.clearTimeout(suppressTimer);
+      disposed = true;
+      suppressionTimers.forEach((timer) => window.clearTimeout(timer));
       suppressEditorChangeRef.current = false;
-      provider.off('sync', seedEmptySyncedDoc);
+      provider.off('status', handleStatus);
+      provider.off('sync', handleSync);
       provider.awareness.off('change', updatePeerCount);
-      binding.destroy();
+      binding?.destroy();
       provider.destroy();
       ydoc.destroy();
+      if (bindingRef.current === binding) {
+        bindingRef.current = null;
+      }
+      if (providerRef.current === provider) {
+        providerRef.current = null;
+      }
+      if (ydocRef.current === ydoc) {
+        ydocRef.current = null;
+      }
     };
   }, [activeFile?.id, editorMountVersion, room?.code, user.avatarUrl, user.color, user.id, user.name]);
 
@@ -819,6 +870,7 @@ export default function App() {
     return (
       <>
         <LandingPage
+          backendWakeUrl={BACKEND_WAKE_URL}
           code={landingCode}
           creating={creatingRoom}
           error={landingError}
@@ -827,6 +879,7 @@ export default function App() {
           onCodeChange={setLandingCode}
           onCreate={() => requestRoomEntry('create')}
           onJoin={() => requestRoomEntry('join')}
+          realtimeWakeUrl={REALTIME_WAKE_URL}
         />
         {entryProfileOpen && (
           <EntryProfileModal
@@ -982,6 +1035,7 @@ export default function App() {
                 expandedFolders={expandedFolders}
                 key={node.path}
                 node={node}
+                onDeletePath={deleteTreePath}
                 onFileSelect={openFileTab}
                 onToggleFolder={toggleFolder}
               />
@@ -1816,7 +1870,7 @@ export default function App() {
         proposerId: user.id,
         proposerName: user.name,
         requiredUserIds,
-        approvedUserIds: []
+        approvedUserIds: [user.id]
       };
       pendingUploadRef.current = { proposalId, candidates, newFolder, openUploaded };
       setPendingSwitch(proposal);
@@ -1833,8 +1887,8 @@ export default function App() {
         return;
       }
 
-      const acceptedEvent: ProjectSwitchEvent = {
-        type: 'accepted',
+      const fileTreeEvent: ProjectSwitchEvent = {
+        type: 'files-updated',
         proposalId: crypto.randomUUID(),
         currentFolder: activeProjectName,
         newFolder,
@@ -1842,11 +1896,11 @@ export default function App() {
         proposerName: user.name,
         files: localFiles,
         replaceExisting: isSwitch,
-        openUploaded,
+        openUploaded: false,
         at: new Date().toISOString()
       };
 
-      queueOrPublishProjectSwitch(acceptedEvent);
+      queueOrPublishProjectSwitch(fileTreeEvent);
     });
   }
 
@@ -1878,7 +1932,7 @@ export default function App() {
         : candidates.map((candidate) => createLocalFileFromCandidate(candidate, workspaceId, user.id));
       const nextFiles = applyUploadedFiles(uploaded, replaceExisting, openUploaded);
       persistRoomFilesSnapshot(nextFiles);
-      void seedYjsDocuments(uploaded);
+      await seedYjsDocuments(uploaded);
       setSaveState('saved');
       setLastSavedAt(new Date().toISOString());
       return nextFiles;
@@ -1886,7 +1940,7 @@ export default function App() {
       const local = candidates.map((candidate) => createLocalFileFromCandidate(candidate, workspaceId, user.id));
       const nextFiles = applyUploadedFiles(local, replaceExisting, openUploaded);
       persistRoomFilesSnapshot(nextFiles);
-      void seedYjsDocuments(local);
+      await seedYjsDocuments(local);
       setSaveState('offline');
       setLastSavedAt(new Date().toISOString());
       return nextFiles;
@@ -1902,13 +1956,11 @@ export default function App() {
       ? replaceExisting
         ? uploadedIds
         : uniqueStrings([...retainedOpenIds, ...uploadedIds])
-      : replaceExisting
-        ? []
-        : retainedOpenIds;
+      : retainedOpenIds;
     const fallbackOpenIds = openUploaded && nextOpenIds.length === 0 && next[0] ? [next[0].id] : nextOpenIds;
     const nextActiveId = openUploaded
       ? uploadedIds[0] ?? fallbackOpenIds[0] ?? null
-      : fallbackOpenIds.includes(activeFileIdRef.current ?? '') ? activeFileIdRef.current : null;
+      : fallbackOpenIds.includes(activeFileIdRef.current ?? '') ? activeFileIdRef.current : fallbackOpenIds[0] ?? null;
     filesRef.current = next;
     openFileIdsRef.current = fallbackOpenIds;
     activeFileIdRef.current = nextActiveId;
@@ -1949,6 +2001,7 @@ export default function App() {
       const ydoc = new Y.Doc();
       const provider = new WebsocketProvider(YJS_URL, `${roomCode}/${file.id}`, ydoc);
       const yText = ydoc.getText('monaco');
+      const yMeta = ydoc.getMap('meta');
       let finished = false;
 
       const cleanup = () => {
@@ -1967,9 +2020,12 @@ export default function App() {
         if (!synced) {
           return;
         }
-        if (yText.length === 0) {
-          yText.insert(0, file.content);
-        }
+        ydoc.transact(() => {
+          if (!yMeta.get('initialized') && yText.length === 0 && file.content) {
+            yText.insert(0, file.content);
+          }
+          yMeta.set('initialized', true);
+        }, 'pear-upload-seed');
         window.setTimeout(cleanup, 150);
       };
 
@@ -2012,15 +2068,24 @@ export default function App() {
     }
 
     if (event.type === 'sync') {
-      if (event.targetUserId === user.id && event.files?.length) {
+      if (event.targetUserId === user.id && Array.isArray(event.files)) {
         const nextFiles = applyUploadedFiles(event.files, event.replaceExisting ?? true, event.openUploaded ?? false);
         persistRoomFilesSnapshot(nextFiles);
       }
       return;
     }
 
+    if (event.type === 'files-updated') {
+      if (event.proposerId !== user.id && Array.isArray(event.files)) {
+        applyUploadedFiles(event.files, event.replaceExisting ?? true, event.openUploaded ?? false);
+        setSaveState('saved');
+        setLastSavedAt(new Date().toISOString());
+      }
+      return;
+    }
+
     if (event.type === 'accepted') {
-      if (event.files?.length && event.proposerId !== user.id) {
+      if (Array.isArray(event.files) && event.proposerId !== user.id) {
         const nextFiles = applyUploadedFiles(event.files, event.replaceExisting ?? true, event.openUploaded ?? false);
         persistRoomFilesSnapshot(nextFiles);
       }
@@ -2095,7 +2160,7 @@ export default function App() {
           approvedUserIds: proposal.requiredUserIds,
           files: uploaded,
           replaceExisting: true,
-          openUploaded: upload.openUploaded,
+          openUploaded: false,
           at: new Date().toISOString()
         });
       })
@@ -2139,7 +2204,7 @@ export default function App() {
   function createFileTreeEvent(nextFiles: WorkspaceFile[], replaceExisting: boolean, openUploaded: boolean): ProjectSwitchEvent {
     const projectName = nextFiles.length > 0 ? projectNameForPaths(nextFiles.map((file) => file.path)) : activeProjectName;
     return {
-      type: 'accepted',
+      type: 'files-updated',
       proposalId: crypto.randomUUID(),
       currentFolder: activeProjectName,
       newFolder: projectName,
@@ -2338,6 +2403,27 @@ export default function App() {
     });
   }
 
+  function deleteTreePath(path: string, kind: 'file' | 'folder') {
+    const currentFiles = filesRef.current;
+    const nextFiles = currentFiles.filter((file) => (
+      kind === 'folder' ? file.path !== path && !file.path.startsWith(`${path}/`) : file.path !== path
+    ));
+    if (nextFiles.length === currentFiles.length) {
+      return;
+    }
+
+    const label = kind === 'folder' ? path : basename(path);
+    if (!window.confirm(`Delete ${kind} "${label}" from this room?`)) {
+      return;
+    }
+
+    const next = applyUploadedFiles(nextFiles, true, false);
+    persistRoomFilesSnapshot(next);
+    queueOrPublishProjectSwitch(createFileTreeEvent(next, true, false));
+    setSaveState('saved');
+    setLastSavedAt(new Date().toISOString());
+  }
+
   function expandForPath(path: string) {
     const parts = path.split('/').filter(Boolean);
     setExpandedFolders((current) => {
@@ -2437,6 +2523,7 @@ export default function App() {
 }
 
 function LandingPage({
+  backendWakeUrl,
   code,
   creating,
   error,
@@ -2444,8 +2531,10 @@ function LandingPage({
   notice,
   onCodeChange,
   onCreate,
-  onJoin
+  onJoin,
+  realtimeWakeUrl
 }: {
+  backendWakeUrl: string;
   code: string;
   creating: boolean;
   error: string;
@@ -2454,9 +2543,18 @@ function LandingPage({
   onCodeChange: (code: string) => void;
   onCreate: () => void;
   onJoin: () => void;
+  realtimeWakeUrl: string;
 }) {
   return (
     <main className="landing-shell">
+      <div className="render-tier-banner" role="status">
+        <strong>Render free tier wake-up:</strong>
+        <span> First room creation can take 1-2 minutes while the backend and realtime services start.</span>
+        <span className="render-tier-links">
+          {backendWakeUrl && <a href={backendWakeUrl} rel="noreferrer" target="_blank">{backendWakeUrl}</a>}
+          {realtimeWakeUrl && <a href={realtimeWakeUrl} rel="noreferrer" target="_blank">{realtimeWakeUrl}</a>}
+        </span>
+      </div>
       <img alt="" className="landing-chibi" src={pearChibiUrl} />
       <section className="landing-hero">
         <div className="landing-hero-grid">
@@ -2730,6 +2828,7 @@ function TreeRow({
   node,
   activeFileId,
   expandedFolders,
+  onDeletePath,
   onFileSelect,
   onToggleFolder,
   depth = 0
@@ -2737,6 +2836,7 @@ function TreeRow({
   node: TreeNode;
   activeFileId: string;
   expandedFolders: Set<string>;
+  onDeletePath: (path: string, kind: 'file' | 'folder') => void;
   onFileSelect: (fileId: string) => void;
   onToggleFolder: (path: string) => void;
   depth?: number;
@@ -2747,26 +2847,36 @@ function TreeRow({
     }
 
     return (
-      <button
-        className={`tree-row file-row ${activeFileId === node.file.id ? 'file-row-active' : ''}`}
-        onClick={() => onFileSelect(node.file!.id)}
-        style={{ paddingLeft: 10 + depth * 14 }}
-        type="button"
-      >
-        <span className={`language-dot ${languageClass(node.file.language)}`} />
-        <span>{node.name}</span>
-      </button>
+      <div className={`tree-row-wrapper ${activeFileId === node.file.id ? 'file-row-active' : ''}`}>
+        <button
+          className="tree-row file-row"
+          onClick={() => onFileSelect(node.file!.id)}
+          style={{ paddingLeft: 10 + depth * 14 }}
+          type="button"
+        >
+          <span className={`language-dot ${languageClass(node.file.language)}`} />
+          <span>{node.name}</span>
+        </button>
+        <button className="tree-delete-button" onClick={() => onDeletePath(node.file!.path, 'file')} title={`Delete ${node.name}`} type="button">
+          <Trash2 size={12} />
+        </button>
+      </div>
     );
   }
 
   const expanded = expandedFolders.has(node.path);
   return (
     <div>
-      <button className="tree-row folder-row" onClick={() => onToggleFolder(node.path)} style={{ paddingLeft: 8 + depth * 14 }} type="button">
-        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <Folder size={14} />
-        <span>{node.name}</span>
-      </button>
+      <div className="tree-row-wrapper">
+        <button className="tree-row folder-row" onClick={() => onToggleFolder(node.path)} style={{ paddingLeft: 8 + depth * 14 }} type="button">
+          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          <Folder size={14} />
+          <span>{node.name}</span>
+        </button>
+        <button className="tree-delete-button" onClick={() => onDeletePath(node.path, 'folder')} title={`Delete ${node.name}`} type="button">
+          <Trash2 size={12} />
+        </button>
+      </div>
       {expanded && node.children.map((child) => (
         <TreeRow
           activeFileId={activeFileId}
@@ -2774,6 +2884,7 @@ function TreeRow({
           expandedFolders={expandedFolders}
           key={child.path}
           node={child}
+          onDeletePath={onDeletePath}
           onFileSelect={onFileSelect}
           onToggleFolder={onToggleFolder}
         />
@@ -2878,6 +2989,33 @@ function persistRoomSession(state: RoomSessionState) {
 
 function clearRoomSession() {
   sessionStorage.removeItem(ROOM_SESSION_STORAGE_KEY);
+}
+
+function buildWakeUrl(baseUrl: string, path: string) {
+  try {
+    const url = new URL(baseUrl);
+    const basePath = url.pathname.replace(/\/+$/, '');
+    url.pathname = `${basePath}/${path.replace(/^\/+/, '')}`;
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+}
+
+function webSocketToHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'wss:') {
+      url.protocol = 'https:';
+    } else if (url.protocol === 'ws:') {
+      url.protocol = 'http:';
+    }
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return value;
+  }
 }
 
 function resolveCreateItemTarget(kind: 'file' | 'folder', rawName: string, existingPaths: string[]) {

@@ -202,12 +202,19 @@ async function hydratePostgresSnapshot(doc, roomCode, fileId) {
     const snapshot = await response.json();
     if (snapshot.encodedState && looksLikeBase64(snapshot.encodedState)) {
       Y.applyUpdate(doc, Buffer.from(snapshot.encodedState, 'base64'));
+      const yText = doc.getText('monaco');
+      const yMeta = doc.getMap('meta');
+      if (yText.length > 0 && !yMeta.get('initialized')) {
+        yMeta.set('initialized', true);
+      }
       log('info', 'Loaded PostgreSQL Yjs snapshot', { room: roomCode, fileId });
     } else if (snapshot.plainText) {
       const yText = doc.getText('monaco');
+      const yMeta = doc.getMap('meta');
       if (yText.length === 0) {
         yText.insert(0, snapshot.plainText);
       }
+      yMeta.set('initialized', true);
       log('info', 'Loaded PostgreSQL plain-text snapshot', { room: roomCode, fileId });
     }
   } catch (error) {

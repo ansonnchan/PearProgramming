@@ -46,6 +46,45 @@ button:disabled {
     linear-gradient(135deg, #fff8df 0%, #dff2c5 48%, #f6ecd6 100%);
 }
 
+.render-tier-banner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: min(1120px, 100%);
+  margin: 0 auto 12px;
+  padding: 10px 14px;
+  border: 1px solid #d7b95d;
+  border-radius: 8px;
+  background: #192514;
+  color: #fff8dc;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+  box-shadow: 0 10px 24px rgb(32 45 20 / 22%);
+}
+
+.render-tier-banner strong {
+  color: #ffe58a;
+}
+
+.render-tier-links {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.render-tier-links a {
+  color: #bdf080;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+
 .landing-shell::before {
   position: fixed;
   inset: -20%;
@@ -785,6 +824,13 @@ button:disabled {
   font-size: 12px;
 }
 
+.tree-row-wrapper {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 23px;
+}
+
 .tree-row {
   display: flex;
   align-items: center;
@@ -805,9 +851,32 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+.tree-row-wrapper:hover,
 .tree-row:hover,
 .file-row-active {
   background: #ebe6dc;
+}
+
+.tree-delete-button {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 23px;
+  border: 0;
+  background: transparent;
+  color: #8a625a;
+  opacity: 0;
+}
+
+.tree-row-wrapper:hover .tree-delete-button,
+.tree-delete-button:focus-visible {
+  opacity: 1;
+}
+
+.tree-delete-button:hover {
+  color: #9a2f24;
+  background: #fff1ec;
 }
 
 .folder-row {
@@ -1112,6 +1181,15 @@ button:disabled {
   line-height: 16px;
   box-shadow: 0 4px 14px rgb(0 0 0 / 28%);
   pointer-events: none;
+}
+
+.yRemoteSelection {
+  background-color: rgb(88 166 255 / 20%);
+}
+
+.yRemoteSelectionHead {
+  position: relative;
+  border-left: 2px solid #58a6ff;
 }
 
 .ai-annotation-widget {
