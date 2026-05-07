@@ -87,7 +87,7 @@ If you are serving the Vite dev app from the host laptop too, start it with `npm
 
 The backend room service is the source of truth for create/join. Room codes are normalized by trimming spaces, removing dashes, and uppercasing before lookup.
 
-Production Redis should use TCP, not REST. The backend accepts either `SPRING_REDIS_URL=rediss://default:<token>@<host>:6379` or `SPRING_REDIS_HOST`/`SPRING_REDIS_PORT`/`SPRING_REDIS_PASSWORD`/`SPRING_REDIS_SSL=true`. Keep `SPRING_REDIS_HEALTH_ENABLED=false` so Redis does not block Render health checks. Both backend room state and realtime Yjs persistence use `PEARPROGRAM_REDIS_KEY_PREFIX`/`REDIS_KEY_PREFIX` with the default prefix `pearprogram`.
+Production Redis should use TCP, not REST. The backend accepts either `SPRING_REDIS_URL=rediss://default:<token>@<host>:6379` or `SPRING_REDIS_HOST`/`SPRING_REDIS_PORT`/`SPRING_REDIS_USERNAME`/`SPRING_REDIS_PASSWORD`/`SPRING_REDIS_SSL=true`. Keep `SPRING_REDIS_HEALTH_ENABLED=false` so Redis does not block Render health checks. Both backend room state and realtime Yjs persistence use `PEARPROGRAM_REDIS_KEY_PREFIX`/`REDIS_KEY_PREFIX` with the default prefix `pearprogram`.
 
 For Render, use `/healthz` as a lightweight backend health endpoint. It returns immediately and does not check Redis or other external services.
 

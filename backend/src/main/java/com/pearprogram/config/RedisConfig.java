@@ -23,13 +23,14 @@ public class RedisConfig {
             @Value("${SPRING_REDIS_URL:${REDIS_URL:}}") String redisUrl,
             @Value("${spring.data.redis.host:localhost}") String redisHost,
             @Value("${spring.data.redis.port:6379}") int redisPort,
+            @Value("${SPRING_REDIS_USERNAME:}") String redisUsername,
             @Value("${spring.data.redis.password:}") String redisPassword,
             @Value("${spring.data.redis.ssl.enabled:false}") boolean redisSslEnabled,
             @Value("${spring.data.redis.timeout:2000ms}") Duration redisTimeout
     ) {
         LettuceClientConfiguration.LettuceClientConfigurationBuilder clientBuilder =
                 LettuceClientConfiguration.builder().commandTimeout(redisTimeout);
-        RedisStandaloneConfiguration redisConfiguration = standaloneConfiguration(redisHost, redisPort, redisPassword);
+        RedisStandaloneConfiguration redisConfiguration = standaloneConfiguration(redisHost, redisPort, redisUsername, redisPassword);
 
         if (redisUrl != null && !redisUrl.isBlank()) {
             try {
@@ -37,11 +38,9 @@ public class RedisConfig {
                 redisConfiguration = standaloneConfiguration(
                         uri.getHost(),
                         uri.getPort() > 0 ? uri.getPort() : 6379,
+                        uri.getUsername(),
                         uri.getPassword() == null ? "" : new String(uri.getPassword())
                 );
-                if (uri.getUsername() != null && !uri.getUsername().isBlank()) {
-                    redisConfiguration.setUsername(uri.getUsername());
-                }
                 if (uri.isSsl()) {
                     clientBuilder.useSsl();
                 }
@@ -55,8 +54,11 @@ public class RedisConfig {
         return new LettuceConnectionFactory(redisConfiguration, clientBuilder.build());
     }
 
-    private RedisStandaloneConfiguration standaloneConfiguration(String host, int port, String password) {
+    private RedisStandaloneConfiguration standaloneConfiguration(String host, int port, String username, String password) {
         RedisStandaloneConfiguration configuration = new RedisStandaloneConfiguration(host, port);
+        if (username != null && !username.isBlank()) {
+            configuration.setUsername(username);
+        }
         if (password != null && !password.isBlank()) {
             configuration.setPassword(RedisPassword.of(password));
         }
