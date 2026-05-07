@@ -2,10 +2,10 @@ import type { AiAnnotation, BootstrapResponse, ChatMessage, Room, RoomAccess, Ro
 import type { UploadCandidate } from './uploads';
 import { getOptionalUrlEnv, getRequiredUrlEnv, logResolvedFrontendEnv } from './env';
 
-export const API_BASE_URL = getRequiredUrlEnv('VITE_API_URL', {
+export const API_BASE_URL = stripWakeHealthPath(getRequiredUrlEnv('VITE_API_URL', {
   aliases: ['VITE_API_BASE_URL'],
   allowedProtocols: ['http:', 'https:']
-});
+}));
 export const STOMP_URL = getRequiredUrlEnv('VITE_STOMP_URL', {
   allowedProtocols: ['http:', 'https:']
 });
@@ -23,7 +23,23 @@ function toWebSocketUrl(value: string) {
   } else if (parsed.protocol === 'http:') {
     parsed.protocol = 'ws:';
   }
+  stripWakeHealthPathInPlace(parsed);
   return parsed.toString().replace(/\/+$/, '');
+}
+
+function stripWakeHealthPath(value: string) {
+  const parsed = new URL(value);
+  stripWakeHealthPathInPlace(parsed);
+  return parsed.toString().replace(/\/+$/, '');
+}
+
+function stripWakeHealthPathInPlace(url: URL) {
+  const path = url.pathname.replace(/\/+$/, '');
+  if (path === '/health' || path === '/healthz') {
+    url.pathname = '/';
+    url.search = '';
+    url.hash = '';
+  }
 }
 
 export class ApiError extends Error {

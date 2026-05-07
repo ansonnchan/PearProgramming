@@ -153,7 +153,9 @@ public class RoomEventController {
 
     @MessageMapping("/room/{code}/project-switch")
     public void projectSwitch(@DestinationVariable String code, ProjectSwitchEvent event) {
-        if (event.files() != null && ("accepted".equals(event.type()) || "sync".equals(event.type()) || "files-updated".equals(event.type()))) {
+        if (event.files() != null && "file-content-updated".equals(event.type())) {
+            roomService.upsertRoomFiles(code, event.files());
+        } else if (event.files() != null && ("accepted".equals(event.type()) || "sync".equals(event.type()) || "files-updated".equals(event.type()))) {
             roomService.saveRoomFiles(code, event.files());
         }
         broadcastService.broadcast("/topic/room/" + code + "/project-switch", event);

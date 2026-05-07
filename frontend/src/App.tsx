@@ -53,6 +53,7 @@ import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEve
 const DEFAULT_COLOR = '#000000';
 const ROOM_SESSION_STORAGE_KEY = 'pearprogram-room-session';
 const CONNECTION_SESSION_STORAGE_KEY = 'pearprogram-connection-session';
+const CONTENT_SYNC_DELAY_MS = 250;
 const BACKEND_WAKE_URL = buildWakeUrl(API_BASE_URL, '/healthz');
 const REALTIME_WAKE_URL = YJS_URL ? buildWakeUrl(webSocketToHttpUrl(YJS_URL), '/health') : '';
 
@@ -216,6 +217,9 @@ export default function App() {
   const roomLockedRef = useRef(false);
   const toastTimerRef = useRef<number | null>(null);
   const heartbeatTimerRef = useRef<number | null>(null);
+  const contentSyncTimerRef = useRef<number | null>(null);
+  const pendingContentSyncRef = useRef<{ fileId: string; content: string; updatedAt: string } | null>(null);
+  const lastLocalEditAtRef = useRef(0);
   const seedingFileIdsRef = useRef<Set<string>>(new Set());
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -223,7 +227,6 @@ export default function App() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const entryAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const bootstrappedRoomRef = useRef(false);
-  const pageUnloadingRef = useRef(false);
 
   const handleJoinRoom = useCallback(async (rawCode: string, displayName?: string, replaceUrl = true) => {
     const code = normalizeRoomCode(rawCode);
@@ -330,10 +333,15 @@ export default function App() {
         return;
       }
       const content = editor.getValue();
-      setFiles((current) => current.map((file) => (
-        file.id === currentFile.id ? { ...file, content, updatedAt: new Date().toISOString() } : file
-      )));
+      const updatedAt = new Date().toISOString();
+      lastLocalEditAtRef.current = Date.now();
+      const nextFiles = filesRef.current.map((file) => (
+        file.id === currentFile.id ? { ...file, content, updatedAt } : file
+      ));
+      filesRef.current = nextFiles;
+      setFiles(nextFiles);
       scheduleAutosave(currentFile.id, content);
+      scheduleContentBroadcast(currentFile.id, content, updatedAt);
     });
 
     editor.onDidChangeCursorPosition((event) => {
@@ -599,38 +607,11 @@ export default function App() {
         window.clearInterval(heartbeatTimerRef.current);
         heartbeatTimerRef.current = null;
       }
-      if (!pageUnloadingRef.current && client.connected) {
-        const currentUser = userRef.current;
-        client.publish({
-          destination: `/app/room/${room.code}/members`,
-          body: JSON.stringify({
-            type: 'left',
-            userId: currentUser.id,
-            sessionId: currentUser.id,
-            connectionId,
-            displayName: currentUser.name,
-            color: currentUser.color,
-            avatarUrl: currentUser.avatarUrl,
-            leadUserId: leadUserIdRef.current,
-            locked: roomLockedRef.current,
-            at: new Date().toISOString()
-          })
-        });
-      }
       void client.deactivate();
       setStompConnected(false);
       setStompClient(null);
     };
   }, [connectionId, room]);
-
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      pageUnloadingRef.current = true;
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -1648,6 +1629,11 @@ export default function App() {
   }
 
   function returnToLanding(notice = '') {
+    if (contentSyncTimerRef.current) {
+      window.clearTimeout(contentSyncTimerRef.current);
+      contentSyncTimerRef.current = null;
+    }
+    pendingContentSyncRef.current = null;
     setRoom(null);
     setFiles([]);
     setOpenFileIds([]);
@@ -1676,6 +1662,7 @@ export default function App() {
 
   function handleLeaveRoom() {
     if (!isLeadPear) {
+      publishLeftMemberEvent();
       returnToLanding();
       return;
     }
@@ -1759,6 +1746,7 @@ export default function App() {
       targetUserName: nextLead.name,
       at: new Date().toISOString()
     });
+    publishLeftMemberEvent();
     returnToLanding();
   }
 
@@ -1971,6 +1959,69 @@ export default function App() {
     return next;
   }
 
+  function applyRemoteFileContentUpdates(incomingFiles: WorkspaceFile[]) {
+    if (incomingFiles.length === 0) {
+      return;
+    }
+
+    const incomingById = new Map(incomingFiles.map((file) => [file.id, file]));
+    const incomingByPath = new Map(incomingFiles.map((file) => [file.path, file]));
+    const appliedIncomingIds = new Set<string>();
+    const activeId = activeFileIdRef.current;
+    const hasRecentLocalEdit = Date.now() - lastLocalEditAtRef.current < 750;
+    let activeContent: string | null = null;
+    let changed = false;
+
+    const nextFiles = filesRef.current.map((file) => {
+      const incoming = incomingById.get(file.id) ?? incomingByPath.get(file.path);
+      if (!incoming) {
+        return file;
+      }
+
+      appliedIncomingIds.add(incoming.id);
+      if (file.id === activeId && hasRecentLocalEdit) {
+        return file;
+      }
+
+      const nextFile = {
+        ...file,
+        ...incoming,
+        id: file.id,
+        workspaceId: file.workspaceId,
+        path: incoming.path || file.path,
+        language: incoming.language || file.language,
+        content: incoming.content ?? file.content,
+        updatedAt: incoming.updatedAt || new Date().toISOString()
+      };
+      if (nextFile.content !== file.content || nextFile.updatedAt !== file.updatedAt || nextFile.path !== file.path) {
+        changed = true;
+      }
+      if (file.id === activeId) {
+        activeContent = nextFile.content;
+      }
+      return nextFile;
+    });
+
+    const existingIds = new Set(filesRef.current.map((file) => file.id));
+    for (const incoming of incomingFiles) {
+      if (!existingIds.has(incoming.id) && !appliedIncomingIds.has(incoming.id)) {
+        nextFiles.push(incoming);
+        changed = true;
+      }
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    const sorted = nextFiles.sort(sortByPath);
+    filesRef.current = sorted;
+    setFiles(sorted);
+    if (activeContent !== null) {
+      replaceActiveEditorContent(activeContent);
+    }
+  }
+
   function persistRoomFilesSnapshot(nextFiles: WorkspaceFile[]) {
     const currentRoom = roomRef.current;
     if (!currentRoom || currentRoom.code === FALLBACK_ROOM.code) {
@@ -2078,6 +2129,15 @@ export default function App() {
     if (event.type === 'files-updated') {
       if (event.proposerId !== user.id && Array.isArray(event.files)) {
         applyUploadedFiles(event.files, event.replaceExisting ?? true, event.openUploaded ?? false);
+        setSaveState('saved');
+        setLastSavedAt(new Date().toISOString());
+      }
+      return;
+    }
+
+    if (event.type === 'file-content-updated') {
+      if (event.proposerId !== user.id && Array.isArray(event.files)) {
+        applyRemoteFileContentUpdates(event.files);
         setSaveState('saved');
         setLastSavedAt(new Date().toISOString());
       }
@@ -2198,7 +2258,72 @@ export default function App() {
       return;
     }
 
+    if (event.type === 'file-content-updated') {
+      const fileId = event.files?.[0]?.id;
+      pendingUploadSyncRef.current = pendingUploadSyncRef.current.filter((pending) => (
+        pending.type !== 'file-content-updated' || pending.files?.[0]?.id !== fileId
+      ));
+    }
     pendingUploadSyncRef.current.push(event);
+  }
+
+  function scheduleContentBroadcast(fileId: string, content: string, updatedAt: string) {
+    const currentRoom = roomRef.current;
+    if (!currentRoom || currentRoom.code === FALLBACK_ROOM.code || !isUuid(fileId)) {
+      return;
+    }
+
+    pendingContentSyncRef.current = { fileId, content, updatedAt };
+    if (contentSyncTimerRef.current) {
+      return;
+    }
+
+    contentSyncTimerRef.current = window.setTimeout(() => {
+      contentSyncTimerRef.current = null;
+      flushContentBroadcast();
+    }, CONTENT_SYNC_DELAY_MS);
+  }
+
+  function flushContentBroadcast() {
+    const pending = pendingContentSyncRef.current;
+    pendingContentSyncRef.current = null;
+    const currentRoom = roomRef.current;
+    if (!pending || !currentRoom || currentRoom.code === FALLBACK_ROOM.code) {
+      return;
+    }
+
+    const file = filesRef.current.find((item) => item.id === pending.fileId);
+    if (!file) {
+      return;
+    }
+
+    const projectName = filesRef.current.length > 0 ? projectNameForPaths(filesRef.current.map((item) => item.path)) : 'Empty room';
+    queueOrPublishProjectSwitch({
+      type: 'file-content-updated',
+      proposalId: crypto.randomUUID(),
+      currentFolder: projectName,
+      newFolder: projectName,
+      proposerId: userRef.current.id,
+      proposerName: userRef.current.name,
+      files: [{ ...file, content: pending.content, updatedAt: pending.updatedAt }],
+      replaceExisting: false,
+      openUploaded: false,
+      at: new Date().toISOString()
+    });
+  }
+
+  function replaceActiveEditorContent(content: string) {
+    const editor = editorRef.current as any;
+    const model = editor?.getModel?.();
+    if (!model || model.getValue() === content) {
+      return;
+    }
+
+    suppressEditorChangeRef.current = true;
+    model.setValue(content);
+    window.setTimeout(() => {
+      suppressEditorChangeRef.current = false;
+    }, 0);
   }
 
   function createFileTreeEvent(nextFiles: WorkspaceFile[], replaceExisting: boolean, openUploaded: boolean): ProjectSwitchEvent {
@@ -2247,6 +2372,21 @@ export default function App() {
     client.publish({
       destination: `/app/room/${currentRoom.code}/members`,
       body: JSON.stringify(event)
+    });
+  }
+
+  function publishLeftMemberEvent() {
+    publishMemberEvent({
+      type: 'left',
+      userId: userRef.current.id,
+      sessionId: userRef.current.id,
+      connectionId,
+      displayName: userRef.current.name,
+      color: userRef.current.color,
+      avatarUrl: userRef.current.avatarUrl,
+      leadUserId: leadUserIdRef.current ?? undefined,
+      locked: roomLockedRef.current,
+      at: new Date().toISOString()
     });
   }
 
@@ -2548,8 +2688,11 @@ function LandingPage({
   return (
     <main className="landing-shell">
       <div className="render-tier-banner" role="status">
-        <strong>Render free tier wake-up:</strong>
-        <span> First room creation can take 1-2 minutes while the backend and realtime services start.</span>
+        <span className="render-tier-message">
+          <strong>Render free tier wake-up:</strong>
+          <span>First room creation can take 1-2 minutes while the backend and realtime services start.</span>
+        </span>
+        <span className="render-tier-instruction">Please click both links below to start the instances.</span>
         <span className="render-tier-links">
           {backendWakeUrl && <a href={backendWakeUrl} rel="noreferrer" target="_blank">{backendWakeUrl}</a>}
           {realtimeWakeUrl && <a href={realtimeWakeUrl} rel="noreferrer" target="_blank">{realtimeWakeUrl}</a>}
@@ -2994,7 +3137,8 @@ function clearRoomSession() {
 function buildWakeUrl(baseUrl: string, path: string) {
   try {
     const url = new URL(baseUrl);
-    const basePath = url.pathname.replace(/\/+$/, '');
+    const currentPath = url.pathname.replace(/\/+$/, '');
+    const basePath = currentPath === '/health' || currentPath === '/healthz' ? '' : currentPath;
     url.pathname = `${basePath}/${path.replace(/^\/+/, '')}`;
     url.search = '';
     url.hash = '';

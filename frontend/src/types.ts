@@ -94,7 +94,7 @@ export type Member = {
 
 
 export type ProjectSwitchEvent = {
-  type: 'proposed' | 'vote' | 'accepted' | 'declined' | 'sync' | 'files-updated';
+  type: 'proposed' | 'vote' | 'accepted' | 'declined' | 'sync' | 'files-updated' | 'file-content-updated';
   proposalId: string;
   currentFolder: string;
   newFolder: string;

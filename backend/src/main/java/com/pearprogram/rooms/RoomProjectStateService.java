@@ -10,6 +10,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -63,6 +65,22 @@ public class RoomProjectStateService {
         return safeFiles;
     }
 
+    public List<Map<String, Object>> upsertFiles(String roomCode, List<Map<String, Object>> files) {
+        List<Map<String, Object>> incomingFiles = files == null ? List.of() : files;
+        if (incomingFiles.isEmpty()) {
+            return getFiles(roomCode);
+        }
+
+        Map<String, Map<String, Object>> byKey = new LinkedHashMap<>();
+        for (Map<String, Object> file : getFiles(roomCode)) {
+            byKey.put(fileKey(file), file);
+        }
+        for (Map<String, Object> file : incomingFiles) {
+            byKey.put(fileKey(file), file);
+        }
+        return saveFiles(roomCode, new ArrayList<>(byKey.values()));
+    }
+
     public void deleteFiles(String roomCode) {
         localFiles.remove(roomCode);
         try {
@@ -74,6 +92,20 @@ public class RoomProjectStateService {
 
     private String roomFilesKey(String roomCode) {
         return keyPrefix + ":room:" + roomCode + ":files";
+    }
+
+    private String fileKey(Map<String, Object> file) {
+        Object id = file.get("id");
+        if (id != null && !id.toString().isBlank()) {
+            return "id:" + id;
+        }
+
+        Object path = file.get("path");
+        if (path != null && !path.toString().isBlank()) {
+            return "path:" + path;
+        }
+
+        return "object:" + file.hashCode();
     }
 
     private String normalizeKeyPrefix(String raw) {

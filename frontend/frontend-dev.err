@@ -1,0 +1,134 @@
+[2m3:57:48 p.m.[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\src\App.tsx: Unexpected token (2554:15)
+
+[0m [90m 2552 |[31m         [33m<[31m[33mspan[31m[33m>[31m [33mFirst[31m room creation can take [35m1[31m[33m-[31m[35m2[31m minutes [36mwhile[31m the backend and realtime services start[33m.[31m [33m<[31m[33m/[31m[33mspan[31m[33m>[31m
+ [90m 2553 |[31m         [33m<[31m[33mbr[31m
+[31m[1m>[22m[31m[90m 2554 |[31m         [33m<[31m[33mspan[31m[33m>[31m [33m<[31m[33m/[31m[33mspan[31m[33m?[31m
+ [90m      |[31m                [31m[1m^[22m[31m
+ [90m 2555 |[31m         [33m<[31m[33m/[31m[33mbr[31m[33m>[31m
+ [90m 2556 |[31m         [33m<[31m[33mspan[31m className[33m=[31m[32m"render-tier-links"[31m[33m>[31m
+ [90m 2557 |[31m           {backendWakeUrl [33m&&[31m [33m<[31m[33ma[31m href[33m=[31m{backendWakeUrl} rel[33m=[31m[32m"noreferrer"[31m target[33m=[31m[32m"_blank"[31m[33m>[31m{backendWakeUrl}[33m<[31m[33m/[31m[33ma[31m[33m>[31m}[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/ananr/Desktop/SWE Projects/PearProgramming/frontend/src/App.tsx[39m:2554:15
+[33m  2552 |          <span> First room creation can take 1-2 minutes while the backend and realtime services start. </span>
+  2553 |          <br
+  2554 |          <span> </span?
+       |                 ^
+  2555 |          </br>
+  2556 |          <span className="render-tier-links">[39m
+      at constructor (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:6616:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:6636:16)
+      at TypeScriptParserMixin.jsxParseIdentifier (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4581:12)
+      at TypeScriptParserMixin.jsxParseNamespacedName (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4588:23)
+      at TypeScriptParserMixin.jsxParseAttribute (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4664:22)
+      at TypeScriptParserMixin.jsxParseOpeningElementAfterName (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4679:28)
+      at TypeScriptParserMixin.jsxParseOpeningElementAfterName (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10060:18)
+      at TypeScriptParserMixin.jsxParseOpeningElementAt (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4674:17)
+      at TypeScriptParserMixin.jsxParseElementAt (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4698:33)
+      at TypeScriptParserMixin.jsxParseElementAt (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4710:32)
+      at TypeScriptParserMixin.jsxParseElementAt (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4710:32)
+      at TypeScriptParserMixin.jsxParseElement (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4761:17)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4771:19)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11098:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11083:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11063:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9854:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10916:61)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10921:23)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10898:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10848:21)
+      at C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9792:39
+      at TypeScriptParserMixin.tryParse (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:6924:20)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9792:18)
+      at C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10817:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12443:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10817:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12510:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11692:28)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11348:23)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4776:20)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11098:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11083:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11063:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9854:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10916:61)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10921:23)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10898:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10848:21)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9803:20)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10801:23)
+      at C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10797:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12438:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10797:17)
+      at TypeScriptParserMixin.parseReturnStatement (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:13159:28)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12815:21)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9525:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12784:17)
+      at TypeScriptParserMixin.parseStatementListItem (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12764:17)
+[2m3:57:53 p.m.[22m [31m[1m[vite][22m[39m [31mInternal server error: C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\src\App.tsx: Unexpected token (2554:15)
+
+[0m [90m 2552 |[31m         [33m<[31m[33mspan[31m[33m>[31m [33mFirst[31m room creation can take [35m1[31m[33m-[31m[35m2[31m minutes [36mwhile[31m the backend and realtime services start[33m.[31m [33m<[31m[33m/[31m[33mspan[31m[33m>[31m
+ [90m 2553 |[31m         [33m<[31m[33mbr[31m
+[31m[1m>[22m[31m[90m 2554 |[31m         [33m<[31m[33mspan[31m[33m>[31m [33m<[31m[33m/[31m[33mspan[31m[33m>[31m
+ [90m      |[31m                [31m[1m^[22m[31m
+ [90m 2555 |[31m         [33m<[31m[33m/[31m[33mbr[31m[33m>[31m
+ [90m 2556 |[31m         [33m<[31m[33mspan[31m className[33m=[31m[32m"render-tier-links"[31m[33m>[31m
+ [90m 2557 |[31m           {backendWakeUrl [33m&&[31m [33m<[31m[33ma[31m href[33m=[31m{backendWakeUrl} rel[33m=[31m[32m"noreferrer"[31m target[33m=[31m[32m"_blank"[31m[33m>[31m{backendWakeUrl}[33m<[31m[33m/[31m[33ma[31m[33m>[31m}[0m[39m
+  Plugin: [35mvite:react-babel[39m
+  File: [36mC:/Users/ananr/Desktop/SWE Projects/PearProgramming/frontend/src/App.tsx[39m:2554:15
+[33m  2552 |          <span> First room creation can take 1-2 minutes while the backend and realtime services start. </span>
+  2553 |          <br
+  2554 |          <span> </span>
+       |                 ^
+  2555 |          </br>
+  2556 |          <span className="render-tier-links">[39m
+      at constructor (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:365:19)
+      at TypeScriptParserMixin.raise (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:6616:19)
+      at TypeScriptParserMixin.unexpected (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:6636:16)
+      at TypeScriptParserMixin.jsxParseIdentifier (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4581:12)
+      at TypeScriptParserMixin.jsxParseNamespacedName (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4588:23)
+      at TypeScriptParserMixin.jsxParseAttribute (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4664:22)
+      at TypeScriptParserMixin.jsxParseOpeningElementAfterName (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4679:28)
+      at TypeScriptParserMixin.jsxParseOpeningElementAfterName (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10060:18)
+      at TypeScriptParserMixin.jsxParseOpeningElementAt (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4674:17)
+      at TypeScriptParserMixin.jsxParseElementAt (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4698:33)
+      at TypeScriptParserMixin.jsxParseElementAt (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4710:32)
+      at TypeScriptParserMixin.jsxParseElementAt (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4710:32)
+      at TypeScriptParserMixin.jsxParseElement (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4761:17)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4771:19)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11098:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11083:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11063:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9854:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10916:61)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10921:23)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10898:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10848:21)
+      at C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9792:39
+      at TypeScriptParserMixin.tryParse (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:6924:20)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9792:18)
+      at C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10817:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12443:12)
+      at TypeScriptParserMixin.parseMaybeAssignAllowIn (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10817:17)
+      at TypeScriptParserMixin.parseMaybeAssignAllowInOrVoidPattern (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12510:17)
+      at TypeScriptParserMixin.parseParenAndDistinguishExpression (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11692:28)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11348:23)
+      at TypeScriptParserMixin.parseExprAtom (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:4776:20)
+      at TypeScriptParserMixin.parseExprSubscripts (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11098:23)
+      at TypeScriptParserMixin.parseUpdate (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11083:21)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:11063:23)
+      at TypeScriptParserMixin.parseMaybeUnary (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9854:18)
+      at TypeScriptParserMixin.parseMaybeUnaryOrPrivate (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10916:61)
+      at TypeScriptParserMixin.parseExprOps (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10921:23)
+      at TypeScriptParserMixin.parseMaybeConditional (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10898:23)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10848:21)
+      at TypeScriptParserMixin.parseMaybeAssign (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9803:20)
+      at TypeScriptParserMixin.parseExpressionBase (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10801:23)
+      at C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10797:39
+      at TypeScriptParserMixin.allowInAnd (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12438:16)
+      at TypeScriptParserMixin.parseExpression (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:10797:17)
+      at TypeScriptParserMixin.parseReturnStatement (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:13159:28)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12815:21)
+      at TypeScriptParserMixin.parseStatementContent (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:9525:18)
+      at TypeScriptParserMixin.parseStatementLike (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12784:17)
+      at TypeScriptParserMixin.parseStatementListItem (C:\Users\ananr\Desktop\SWE Projects\PearProgramming\frontend\node_modules\@babel\parser\lib\index.js:12764:17)

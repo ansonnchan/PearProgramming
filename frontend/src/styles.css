@@ -50,10 +50,10 @@ button:disabled {
   position: relative;
   z-index: 2;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   width: min(1120px, 100%);
   margin: 0 auto 12px;
   padding: 10px 14px;
@@ -67,8 +67,20 @@ button:disabled {
   box-shadow: 0 10px 24px rgb(32 45 20 / 22%);
 }
 
+.render-tier-message {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
 .render-tier-banner strong {
   color: #ffe58a;
+}
+
+.render-tier-instruction {
+  color: #ffffff;
+  font-size: 14px;
 }
 
 .render-tier-links {

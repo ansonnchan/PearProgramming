@@ -84,6 +84,12 @@ public class RoomService {
         return projectStateService.saveFiles(normalized, files);
     }
 
+    public List<Map<String, Object>> upsertRoomFiles(String code, List<Map<String, Object>> files) {
+        String normalized = normalizeRoomCode(code);
+        ensureRoomExists(normalized);
+        return projectStateService.upsertFiles(normalized, files);
+    }
+
     public RoomJoinResponse joinRoom(String code) {
         String normalized = normalizeRoomCode(code);
         ensureRoomExists(normalized);
