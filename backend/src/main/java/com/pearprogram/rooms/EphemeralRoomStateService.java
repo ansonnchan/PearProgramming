@@ -83,7 +83,7 @@ public class EphemeralRoomStateService {
                     pong, endpoint.safeHost(), endpoint.safePort(), endpoint.sslEnabled(), keyPrefix);
         } catch (RuntimeException ex) {
             redisAvailable = false;
-            log.warn("Room state is using in-memory fallback. Redis connection failed: {} hostPresent={} portPresent={} sslEnabled={} keyPrefix={}",
+            log.warn("Room state is using in-memory fallback. Redis connection failed: {} hostPresent={} portPresent={} sslEnabled={} keyPrefix={}. Production room joins may break across instances or after restarts until Redis is reachable.",
                     rootCauseMessage(ex), endpoint.hostPresent(), endpoint.portPresent(), endpoint.sslEnabled(), keyPrefix);
         }
     }
@@ -873,7 +873,7 @@ public class EphemeralRoomStateService {
                 return redisAction.get();
             } catch (RuntimeException ex) {
                 redisAvailable = false;
-                log.warn("Redis unavailable; switching room state to in-memory fallback. Existing Redis-backed rooms may not be visible from this instance. {}",
+                log.warn("Redis unavailable; switching room state to in-memory fallback. Existing Redis-backed rooms may not be visible from this instance, and production room joins may break across instances or after restarts. {}",
                         rootCauseMessage(ex));
             }
         }

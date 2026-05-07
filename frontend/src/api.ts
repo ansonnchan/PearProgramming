@@ -1,9 +1,19 @@
 import type { AiAnnotation, BootstrapResponse, ChatMessage, Room, RoomAccess, RoomCreateResponse, RoomJoinResponse, Workspace, WorkspaceFile } from './types';
 import type { UploadCandidate } from './uploads';
+import { getOptionalUrlEnv, getRequiredUrlEnv, logResolvedFrontendEnv } from './env';
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
-export const STOMP_URL = import.meta.env.VITE_STOMP_URL ?? '';
-export const YJS_URL = import.meta.env.VITE_YJS_URL ?? '';
+export const API_BASE_URL = getRequiredUrlEnv('VITE_API_URL', {
+  aliases: ['VITE_API_BASE_URL'],
+  allowedProtocols: ['http:', 'https:']
+});
+export const STOMP_URL = getRequiredUrlEnv('VITE_STOMP_URL', {
+  allowedProtocols: ['http:', 'https:']
+});
+export const YJS_URL = getOptionalUrlEnv('VITE_YJS_URL', {
+  allowedProtocols: ['ws:', 'wss:']
+});
+
+logResolvedFrontendEnv({ apiUrl: API_BASE_URL, stompUrl: STOMP_URL, yjsUrl: YJS_URL });
 
 export class ApiError extends Error {
   status: number;

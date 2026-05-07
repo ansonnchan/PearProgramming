@@ -30,27 +30,48 @@ public class RedisConfig {
     ) {
         LettuceClientConfiguration.LettuceClientConfigurationBuilder clientBuilder =
                 LettuceClientConfiguration.builder().commandTimeout(redisTimeout);
-        RedisStandaloneConfiguration redisConfiguration = standaloneConfiguration(redisHost, redisPort, redisUsername, redisPassword);
+        String configuredUrl = redisUrl == null ? "" : redisUrl.trim();
+        String configuredHost = redisHost == null ? "localhost" : redisHost.trim();
+        String configuredUsername = redisUsername == null ? "" : redisUsername.trim();
+        String configuredPassword = redisPassword == null ? "" : redisPassword.trim();
+        boolean sslEnabled = redisSslEnabled;
+        String source = "split-env";
+        RedisStandaloneConfiguration redisConfiguration = standaloneConfiguration(configuredHost, redisPort, configuredUsername, configuredPassword);
 
-        if (redisUrl != null && !redisUrl.isBlank()) {
+        if (!configuredUrl.isBlank()) {
             try {
-                RedisURI uri = RedisURI.create(redisUrl);
+                RedisURI uri = RedisURI.create(configuredUrl);
+                source = "url";
+                sslEnabled = uri.isSsl();
+                configuredHost = uri.getHost();
+                configuredUsername = uri.getUsername() == null ? "" : uri.getUsername();
                 redisConfiguration = standaloneConfiguration(
-                        uri.getHost(),
+                        configuredHost,
                         uri.getPort() > 0 ? uri.getPort() : 6379,
-                        uri.getUsername(),
+                        configuredUsername,
                         uri.getPassword() == null ? "" : new String(uri.getPassword())
                 );
-                if (uri.isSsl()) {
+                if (sslEnabled) {
                     clientBuilder.useSsl();
                 }
             } catch (RuntimeException ex) {
                 log.warn("Invalid Redis TCP URL; falling back to host/port Redis settings. reason={}", ex.getClass().getSimpleName());
+                if (redisSslEnabled) {
+                    sslEnabled = true;
+                    clientBuilder.useSsl();
+                }
             }
         } else if (redisSslEnabled) {
             clientBuilder.useSsl();
         }
 
+        log.info("Redis connection factory configured: source={}, host={}, port={}, usernamePresent={}, sslEnabled={}, timeoutMs={}",
+                source,
+                configuredHost == null || configuredHost.isBlank() ? "<missing>" : configuredHost,
+                redisConfiguration.getPort(),
+                configuredUsername != null && !configuredUsername.isBlank(),
+                sslEnabled,
+                redisTimeout.toMillis());
         return new LettuceConnectionFactory(redisConfiguration, clientBuilder.build());
     }
 

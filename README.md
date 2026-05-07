@@ -78,7 +78,7 @@ Default local endpoints:
 For two laptops on the same network, `localhost` only points to each laptop itself. Start backend and realtime bound normally, then set the second laptop's frontend env to the host machine's LAN IP:
 
 ```env
-VITE_API_BASE_URL=http://YOUR_LAN_IP:8081
+VITE_API_URL=http://YOUR_LAN_IP:8081
 VITE_STOMP_URL=http://YOUR_LAN_IP:8081/ws
 VITE_YJS_URL=ws://YOUR_LAN_IP:1235
 ```
