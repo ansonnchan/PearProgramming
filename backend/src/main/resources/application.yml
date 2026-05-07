@@ -16,7 +16,7 @@ spring:
           min-idle: 0
           max-wait: 1000ms
 server:
-  port: ${SERVER_PORT:8081}
+  port: ${PORT:${SERVER_PORT:8081}}
 
 pearprogram:
   cors:
