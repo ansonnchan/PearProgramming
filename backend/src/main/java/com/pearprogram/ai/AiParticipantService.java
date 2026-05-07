@@ -71,10 +71,14 @@ public class AiParticipantService {
     }
 
     public String chatResponse(String displayName, String currentFile) {
-        return chatResponse(displayName, currentFile, null, null);
+        return chatResponse(displayName, currentFile, null, null, null);
     }
 
     public String chatResponse(String displayName, String currentFile, String userMessage, Integer currentLine) {
+        return chatResponse(displayName, currentFile, userMessage, currentLine, null);
+    }
+
+    public String chatResponse(String displayName, String currentFile, String userMessage, Integer currentLine, String currentFileContent) {
         if (usesPlaceholderResponses()) {
             String user = displayName == null || displayName.isBlank() ? "your teammate" : displayName;
             String file = currentFile == null || currentFile.isBlank() ? "the active file" : currentFile;
@@ -86,7 +90,7 @@ public class AiParticipantService {
         }
 
         try {
-            String response = callGroq(displayName, currentFile, userMessage, currentLine);
+            String response = callGroq(displayName, currentFile, userMessage, currentLine, currentFileContent);
             if (response == null || response.isBlank()) {
                 return "PearAI could not produce a response. Try asking again with a little more context.";
             }
@@ -97,14 +101,14 @@ public class AiParticipantService {
         }
     }
 
-    private String callGroq(String displayName, String currentFile, String userMessage, Integer currentLine) throws JsonProcessingException {
+    private String callGroq(String displayName, String currentFile, String userMessage, Integer currentLine, String currentFileContent) throws JsonProcessingException {
         Map<String, Object> request = Map.of(
                 "model", model,
                 "temperature", temperature,
                 "max_completion_tokens", maxCompletionTokens,
                 "messages", List.of(
                         Map.of("role", "system", "content", SYSTEM_PROMPT),
-                        Map.of("role", "user", "content", buildUserPrompt(displayName, currentFile, userMessage, currentLine))
+                        Map.of("role", "user", "content", buildUserPrompt(displayName, currentFile, userMessage, currentLine, currentFileContent))
                 )
         );
 
@@ -119,7 +123,7 @@ public class AiParticipantService {
         return root.path("choices").path(0).path("message").path("content").asText("");
     }
 
-    private String buildUserPrompt(String displayName, String currentFile, String userMessage, Integer currentLine) {
+    private String buildUserPrompt(String displayName, String currentFile, String userMessage, Integer currentLine, String currentFileContent) {
         String user = displayName == null || displayName.isBlank() ? "A teammate" : displayName;
         String file = currentFile == null || currentFile.isBlank() ? "No file selected" : currentFile;
         String line = currentLine == null || currentLine < 1 ? "Unknown" : currentLine.toString();
@@ -129,18 +133,35 @@ public class AiParticipantService {
         if (message.isBlank()) {
             message = "The user mentioned @AI without additional details.";
         }
+        String codeContext = trimCodeContext(currentFileContent);
 
         return """
                 User: %s
                 Current file: %s
                 Cursor line: %s
+                Visible active file code:
+                ```text
+                %s
+                ```
 
                 User chat message:
                 %s
 
                 Respond as PearAI in the room chat. Be concise, practical, and specific to the visible context.
                 If you need more code context before making a confident suggestion, ask one short follow-up question.
-                """.formatted(user, file, line, message);
+                """.formatted(user, file, line, codeContext, message);
+    }
+
+    private String trimCodeContext(String currentFileContent) {
+        if (currentFileContent == null || currentFileContent.isBlank()) {
+            return "No code content was provided.";
+        }
+        String normalized = currentFileContent.strip();
+        int maxChars = 12_000;
+        if (normalized.length() <= maxChars) {
+            return normalized;
+        }
+        return normalized.substring(0, maxChars) + "\n...[truncated]";
     }
 
     private String trimTrailingSlash(String value) {

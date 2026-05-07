@@ -13,7 +13,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.lang.Nullable;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -23,7 +22,7 @@ import java.util.UUID;
 
 @Controller
 public class RoomEventController {
-    private final SimpMessagingTemplate messagingTemplate;
+    private final RealtimeBroadcastService broadcastService;
     private final RoomService roomService;
     private final EphemeralRoomStateService roomStateService;
     private final AiParticipantService aiParticipantService;
@@ -31,14 +30,14 @@ public class RoomEventController {
     private final MeterRegistry meterRegistry;
 
     public RoomEventController(
-            SimpMessagingTemplate messagingTemplate,
+            RealtimeBroadcastService broadcastService,
             RoomService roomService,
             EphemeralRoomStateService roomStateService,
             AiParticipantService aiParticipantService,
             AiAnnotationService aiAnnotationService,
             @Nullable MeterRegistry meterRegistry
     ) {
-        this.messagingTemplate = messagingTemplate;
+        this.broadcastService = broadcastService;
         this.roomService = roomService;
         this.roomStateService = roomStateService;
         this.aiParticipantService = aiParticipantService;
@@ -53,7 +52,7 @@ public class RoomEventController {
         }
 
         incrementChatRate(code);
-        messagingTemplate.convertAndSend("/topic/room/" + code + "/chat", new ChatOutboundMessage(
+        broadcastService.broadcast("/topic/room/" + code + "/chat", new ChatOutboundMessage(
             java.util.UUID.randomUUID(),
                 inbound.userId(),
                 inbound.displayName() == null || inbound.displayName().isBlank() ? "Guest" : inbound.displayName(),
@@ -63,7 +62,7 @@ public class RoomEventController {
         ));
 
         if (inbound.content() != null && inbound.content().toUpperCase().contains("@AI")) {
-            messagingTemplate.convertAndSend("/topic/room/" + code + "/chat", new ChatOutboundMessage(
+            broadcastService.broadcast("/topic/room/" + code + "/chat", new ChatOutboundMessage(
                 java.util.UUID.randomUUID(),
                     null,
                     "AI",
@@ -71,7 +70,8 @@ public class RoomEventController {
                     inbound.displayName(),
                     inbound.currentFile(),
                     inbound.content(),
-                    inbound.currentLine()
+                    inbound.currentLine(),
+                    inbound.currentFileContent()
                 ),
                     true,
                 OffsetDateTime.now()
@@ -84,7 +84,7 @@ public class RoomEventController {
 
     @MessageMapping("/room/{code}/cursors")
     public void cursor(@DestinationVariable String code, CursorMessage cursor) {
-        messagingTemplate.convertAndSend("/topic/room/" + code + "/cursors", cursor);
+        broadcastService.broadcast("/topic/room/" + code + "/cursors", cursor);
     }
 
     @MessageMapping("/room/{code}/members")
@@ -145,15 +145,15 @@ public class RoomEventController {
         } else {
             outbound = withRoomState(event, roomStateService.roomAccess(code, event.sessionId(), event.displayName()));
         }
-        messagingTemplate.convertAndSend("/topic/room/" + code + "/members", outbound);
+        broadcastService.broadcast("/topic/room/" + code + "/members", outbound);
         if (followUp != null) {
-            messagingTemplate.convertAndSend("/topic/room/" + code + "/members", followUp);
+            broadcastService.broadcast("/topic/room/" + code + "/members", followUp);
         }
     }
 
     @MessageMapping("/room/{code}/project-switch")
     public void projectSwitch(@DestinationVariable String code, ProjectSwitchEvent event) {
-        messagingTemplate.convertAndSend("/topic/room/" + code + "/project-switch", event);
+        broadcastService.broadcast("/topic/room/" + code + "/project-switch", event);
     }
 
     @MessageMapping("/room/{code}/ping")
@@ -166,7 +166,7 @@ public class RoomEventController {
                     .register(meterRegistry)
                     .record(Duration.ofMillis(now - ping.sentAt()));
         }
-        messagingTemplate.convertAndSend("/topic/room/" + code + "/pong", new PongMessage(ping.sentAt(), now));
+        broadcastService.sendLocal("/topic/room/" + code + "/pong", new PongMessage(ping.sentAt(), now));
     }
 
     private void incrementChatRate(String code) {
@@ -194,7 +194,7 @@ public class RoomEventController {
                     inbound.displayName()
             );
             if (annotation != null) {
-                messagingTemplate.convertAndSend("/topic/room/" + roomCode + "/annotations", annotation);
+                broadcastService.broadcast("/topic/room/" + roomCode + "/annotations", annotation);
             }
         } catch (IllegalArgumentException ignored) {
             // Local fallback file ids are not UUIDs, so the frontend handles placeholder annotations itself.

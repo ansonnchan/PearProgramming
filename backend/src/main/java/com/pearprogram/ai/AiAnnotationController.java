@@ -1,7 +1,7 @@
 package com.pearprogram.ai;
 
 import jakarta.validation.Valid;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
+import com.pearprogram.realtime.RealtimeBroadcastService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,11 +15,11 @@ import java.util.UUID;
 @RestController
 public class AiAnnotationController {
     private final AiAnnotationService annotationService;
-    private final SimpMessagingTemplate messagingTemplate;
+    private final RealtimeBroadcastService broadcastService;
 
-    public AiAnnotationController(AiAnnotationService annotationService, SimpMessagingTemplate messagingTemplate) {
+    public AiAnnotationController(AiAnnotationService annotationService, RealtimeBroadcastService broadcastService) {
         this.annotationService = annotationService;
-        this.messagingTemplate = messagingTemplate;
+        this.broadcastService = broadcastService;
     }
 
     @GetMapping("/api/rooms/{code}/files/{fileId}/annotations")
@@ -31,7 +31,7 @@ public class AiAnnotationController {
     public AiAnnotationDto create(@PathVariable String code, @Valid @RequestBody CreateAnnotationRequest request) {
         AiAnnotationDto annotation = annotationService.create(code, request);
         if (annotation != null) {
-            messagingTemplate.convertAndSend("/topic/room/" + code + "/annotations", annotation);
+            broadcastService.broadcast("/topic/room/" + code + "/annotations", annotation);
         }
         return annotation;
     }

@@ -26,6 +26,9 @@ pearprogram:
     cleanup-scan-ms: ${ROOM_CLEANUP_SCAN_MS:5000}
   redis:
     key-prefix: ${PEARPROGRAM_REDIS_KEY_PREFIX:pearprogram}
+  realtime:
+    redis-broadcast-enabled: ${PEARPROGRAM_REALTIME_REDIS_BROADCAST_ENABLED:true}
+    redis-broadcast-retry-ms: ${PEARPROGRAM_REALTIME_REDIS_BROADCAST_RETRY_MS:30000}
   ai:
     placeholder-mode: ${PEARPROGRAM_AI_PLACEHOLDER:false}
 

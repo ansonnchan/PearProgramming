@@ -16,6 +16,9 @@ const ROOM_TTL_SECONDS = numberFromEnv('ROOM_TTL_SECONDS', 24 * 60 * 60);
 const ROOM_CLEANUP_GRACE_MS = numberFromEnv('ROOM_CLEANUP_GRACE_MS', 120_000);
 const REDIS_KEY_PREFIX = normalizeRedisKeyPrefix(process.env.PEARPROGRAM_REDIS_KEY_PREFIX || process.env.REDIS_KEY_PREFIX || 'pearprogram');
 const REDIS_CONFIG = redisConfigFromEnv();
+const INSTANCE_ID = randomInstanceId();
+const REDIS_BROADCAST_ORIGIN = Symbol('redis-yjs-broadcast');
+const YJS_BROADCAST_CHANNEL = `${REDIS_KEY_PREFIX}:yjs:broadcast`;
 
 const hydratedDocs = new Set();
 const persistenceAttached = new Set();
@@ -23,13 +26,16 @@ const lastFlushMs = new Map();
 const roomSockets = new Map();
 const roomCleanupTimers = new Map();
 let redisAvailable = false;
+let redisPubSubAvailable = false;
 let redis = null;
+let redisSubscriber = null;
 
 log('info', 'Realtime configuration loaded', {
   envFiles: loadedEnvFiles,
   snapshotEndpoint: sanitizeUrl(SNAPSHOT_ENDPOINT),
   roomCleanupEndpoint: sanitizeUrl(ROOM_CLEANUP_ENDPOINT),
-  cleanupGraceMs: ROOM_CLEANUP_GRACE_MS
+  cleanupGraceMs: ROOM_CLEANUP_GRACE_MS,
+  instanceId: INSTANCE_ID
 });
 
 if (REDIS_CONFIG.enabled) {
@@ -58,6 +64,7 @@ if (REDIS_CONFIG.enabled) {
       keyPrefix: REDIS_KEY_PREFIX
     });
     logMetric('redis_available', 1);
+    startRedisPubSub();
   });
 
   redis.on('error', (error) => {
@@ -71,10 +78,12 @@ if (REDIS_CONFIG.enabled) {
       });
     }
     redisAvailable = false;
+    redisPubSubAvailable = false;
   });
 
   redis.connect().catch((error) => {
     redisAvailable = false;
+    redisPubSubAvailable = false;
     log('warn', 'Redis connection failed on startup; continuing with in-memory docs', {
       mode: REDIS_CONFIG.mode,
       hostPresent: Boolean(REDIS_CONFIG.host),
@@ -96,6 +105,7 @@ const server = http.createServer(async (req, res) => {
     json(res, 200, {
       status: 'ok',
       redisAvailable,
+      redisPubSubAvailable,
       redisMode: REDIS_CONFIG.mode,
       redisKeyPrefix: REDIS_KEY_PREFIX,
       activeDocs: docs.size,
@@ -230,7 +240,11 @@ function attachRedisPersistence(doc, roomCode, fileId) {
   }
 
   persistenceAttached.add(docName);
-  doc.on('update', async (update) => {
+  doc.on('update', async (update, origin) => {
+    if (origin === REDIS_BROADCAST_ORIGIN) {
+      return;
+    }
+
     logMetric('yjs_sync_delay_ms', 0, roomCode);
     if (!redis || !redisAvailable) {
       return;
@@ -240,10 +254,99 @@ function attachRedisPersistence(doc, roomCode, fileId) {
       const key = redisKey(roomCode, fileId);
       await redis.rpush(key, Buffer.from(update).toString('base64'));
       await redis.expire(key, ROOM_TTL_SECONDS);
+      await publishYjsUpdate(docName, roomCode, fileId, update);
     } catch (error) {
       log('warn', 'Unable to persist Yjs update to Redis', { room: roomCode, fileId, error: error.message });
     }
   });
+}
+
+async function publishYjsUpdate(docName, roomCode, fileId, update) {
+  if (!redis || !redisAvailable) {
+    return;
+  }
+
+  try {
+    await redis.publish(YJS_BROADCAST_CHANNEL, JSON.stringify({
+      originInstanceId: INSTANCE_ID,
+      docName,
+      roomCode,
+      fileId,
+      update: Buffer.from(update).toString('base64')
+    }));
+  } catch (error) {
+    log('warn', 'Unable to publish Yjs update to Redis pub/sub', { room: roomCode, fileId, error: error.message });
+  }
+}
+
+function startRedisPubSub() {
+  if (!redis || redisSubscriber) {
+    return;
+  }
+
+  redisSubscriber = redis.duplicate({
+    lazyConnect: true,
+    maxRetriesPerRequest: 1,
+    enableReadyCheck: true
+  });
+
+  redisSubscriber.on('ready', () => {
+    redisPubSubAvailable = true;
+    log('info', 'Redis pub/sub connected for live Yjs fanout', {
+      channel: YJS_BROADCAST_CHANNEL,
+      instanceId: INSTANCE_ID
+    });
+  });
+
+  redisSubscriber.on('message', (channel, raw) => {
+    if (channel !== YJS_BROADCAST_CHANNEL) {
+      return;
+    }
+    applyRemoteYjsUpdate(raw);
+  });
+
+  redisSubscriber.on('error', (error) => {
+    if (redisPubSubAvailable) {
+      log('warn', 'Redis pub/sub unavailable for live Yjs fanout; cross-instance edits may not sync in real time', {
+        error: error.message
+      });
+    }
+    redisPubSubAvailable = false;
+  });
+
+  redisSubscriber.connect()
+    .then(() => redisSubscriber.subscribe(YJS_BROADCAST_CHANNEL))
+    .catch((error) => {
+      redisPubSubAvailable = false;
+      redisSubscriber?.disconnect();
+      redisSubscriber = null;
+      log('warn', 'Redis pub/sub connection failed; cross-instance edits may not sync in real time', {
+        error: error.message,
+        channel: YJS_BROADCAST_CHANNEL
+      });
+      setTimeout(startRedisPubSub, 30_000).unref?.();
+    });
+}
+
+function applyRemoteYjsUpdate(raw) {
+  try {
+    const event = JSON.parse(raw);
+    if (event.originInstanceId === INSTANCE_ID) {
+      return;
+    }
+    if (!event.docName || !event.update) {
+      return;
+    }
+
+    const doc = docs.get(event.docName);
+    if (!doc) {
+      return;
+    }
+
+    Y.applyUpdate(doc, Buffer.from(event.update, 'base64'), REDIS_BROADCAST_ORIGIN);
+  } catch (error) {
+    log('warn', 'Unable to apply remote Yjs update from Redis pub/sub', { error: error.message });
+  }
 }
 
 async function flushSnapshots() {
@@ -401,6 +504,10 @@ function redisKey(roomCode, fileId) {
 function normalizeRedisKeyPrefix(value) {
   const normalized = String(value || '').trim().replace(/^:+|:+$/g, '');
   return normalized || 'pearprogram';
+}
+
+function randomInstanceId() {
+  return Math.random().toString(36).slice(2, 10);
 }
 
 function redisConfigFromEnv() {

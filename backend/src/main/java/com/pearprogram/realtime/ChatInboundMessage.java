@@ -6,6 +6,7 @@ public record ChatInboundMessage(
         String content,
         String currentFileId,
         String currentFile,
-        Integer currentLine
+        Integer currentLine,
+        String currentFileContent
 ) {
 }

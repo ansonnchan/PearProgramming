@@ -698,7 +698,7 @@ export default function App() {
     const suppressTimer = window.setTimeout(() => {
       suppressEditorChangeRef.current = false;
     }, 0);
-    provider.awareness.setLocalStateField('user', { name: user.name, color: DEFAULT_COLOR });
+    provider.awareness.setLocalStateField('user', { name: user.name, color: user.color, avatarUrl: user.avatarUrl });
     provider.on('status', ({ status }: { status: string }) => {
       setSyncStatus(status === 'connected' ? 'Yjs synced' : 'Yjs reconnecting');
     });
@@ -727,7 +727,7 @@ export default function App() {
       provider.destroy();
       ydoc.destroy();
     };
-  }, [activeFile?.id, editorMountVersion, room?.code, user.color, user.id, user.name]);
+  }, [activeFile?.id, editorMountVersion, room?.code, user.avatarUrl, user.color, user.id, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -1374,6 +1374,7 @@ export default function App() {
 
     setMentionState((current) => ({ ...current, open: false }));
     setChatError('');
+    const mentionsAi = content.toUpperCase().includes('@AI');
     if (stompClient?.connected) {
       stompClient.publish({
         destination: `/app/room/${room.code}/chat`,
@@ -1383,11 +1384,11 @@ export default function App() {
           content,
           currentFileId: activeFile?.id,
           currentFile: activeFile?.path,
-          currentLine: cursorPosition.line
+          currentLine: cursorPosition.line,
+          currentFileContent: mentionsAi ? activeFileContextForAi(activeFile, cursorPosition.line, editorRef.current) : undefined
         })
       });
     } else {
-      const mentionsAi = content.toUpperCase().includes('@AI');
       setMessages((current) => [
         ...current,
         {
@@ -2397,7 +2398,7 @@ export default function App() {
       client.publish({
         destination: `/app/room/${currentRoom.code}/members`,
         body: JSON.stringify({
-          type: 'joined',
+          type: 'presence-sync',
           userId: updated.id,
           sessionId: updated.id,
           connectionId,
@@ -3116,6 +3117,47 @@ function uniqueFolderPath(existingPaths: string[], basename: string) {
 
 function normalizeRoomCode(value: string) {
   return value.trim().toUpperCase().replace(/[\s-]+/g, '');
+}
+
+function activeFileContextForAi(activeFile: WorkspaceFile | null, cursorLine: number, editor: any) {
+  const content = typeof editor?.getValue === 'function' ? editor.getValue() : activeFile?.content ?? '';
+  if (!content.trim()) {
+    return '';
+  }
+
+  const maxChars = 12_000;
+  if (content.length <= maxChars) {
+    return content;
+  }
+
+  const lines = content.split(/\r?\n/);
+  const cursorIndex = Math.max(0, Math.min(lines.length - 1, cursorLine - 1));
+  const selected: string[] = [];
+  let total = 0;
+  let before = cursorIndex;
+  let after = cursorIndex + 1;
+
+  while (total < maxChars && (before >= 0 || after < lines.length)) {
+    if (before >= 0) {
+      const line = lines[before];
+      selected.unshift(line);
+      total += line.length + 1;
+      before -= 1;
+    }
+    if (total >= maxChars) {
+      break;
+    }
+    if (after < lines.length) {
+      const line = lines[after];
+      selected.push(line);
+      total += line.length + 1;
+      after += 1;
+    }
+  }
+
+  const prefix = before >= 0 ? '...[earlier lines truncated]\n' : '';
+  const suffix = after < lines.length ? '\n...[later lines truncated]' : '';
+  return `${prefix}${selected.join('\n')}${suffix}`;
 }
 
 function isValidRoomCode(value: string) {
