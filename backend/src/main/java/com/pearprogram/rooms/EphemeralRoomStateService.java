@@ -51,6 +51,7 @@ public class EphemeralRoomStateService {
     private final boolean redisSslEnabled;
     private final Map<String, LocalRoomState> localRooms = new ConcurrentHashMap<>();
     private volatile boolean redisAvailable = false;
+    private volatile boolean redisFailureLogged = false;
 
     public EphemeralRoomStateService(
             StringRedisTemplate redisTemplate,
@@ -74,17 +75,33 @@ public class EphemeralRoomStateService {
     @PostConstruct
     void diagnoseRedisStartup() {
         RedisEndpoint endpoint = redisEndpoint();
-        log.info("Redis room state startup diagnostics: urlConfigured={}, hostPresent={}, portPresent={}, sslEnabled={}, keyPrefix={}",
+        log.info("Redis room state startup diagnostics: urlConfigured={}, hostPresent={}, portPresent={}, sslEnabled={}, keyPrefix={}. Connectivity will be checked in the background so Redis does not block deployment.",
                 !redisUrl.isBlank(), endpoint.hostPresent(), endpoint.portPresent(), endpoint.sslEnabled(), keyPrefix);
+    }
+
+    @Scheduled(
+            initialDelayString = "${pearprogram.redis.connection-initial-delay-ms:5000}",
+            fixedDelayString = "${pearprogram.redis.connection-retry-ms:30000}"
+    )
+    void refreshRedisAvailability() {
+        RedisEndpoint endpoint = redisEndpoint();
         try {
             String pong = redisTemplate.execute((RedisCallback<String>) (connection) -> connection.ping());
+            boolean wasUnavailable = !redisAvailable;
             redisAvailable = true;
-            log.info("Room state is Redis-backed. ping={}, host={}, port={}, sslEnabled={}, keyPrefix={}",
-                    pong, endpoint.safeHost(), endpoint.safePort(), endpoint.sslEnabled(), keyPrefix);
+            redisFailureLogged = false;
+            if (wasUnavailable) {
+                log.info("Room state is Redis-backed. ping={}, host={}, port={}, sslEnabled={}, keyPrefix={}",
+                        pong, endpoint.safeHost(), endpoint.safePort(), endpoint.sslEnabled(), keyPrefix);
+            }
         } catch (RuntimeException ex) {
+            boolean wasAvailable = redisAvailable;
             redisAvailable = false;
-            log.warn("Room state is using in-memory fallback. Redis connection failed: {} hostPresent={} portPresent={} sslEnabled={} keyPrefix={}. Production room joins may break across instances or after restarts until Redis is reachable.",
-                    rootCauseMessage(ex), endpoint.hostPresent(), endpoint.portPresent(), endpoint.sslEnabled(), keyPrefix);
+            if (wasAvailable || !redisFailureLogged) {
+                redisFailureLogged = true;
+                log.warn("Room state is using in-memory fallback. Redis connection failed: {} hostPresent={} portPresent={} sslEnabled={} keyPrefix={}. Production room joins may break across instances or after restarts until Redis is reachable.",
+                        rootCauseMessage(ex), endpoint.hostPresent(), endpoint.portPresent(), endpoint.sslEnabled(), keyPrefix);
+            }
         }
     }
 

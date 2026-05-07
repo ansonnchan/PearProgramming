@@ -26,6 +26,8 @@ pearprogram:
     cleanup-scan-ms: ${ROOM_CLEANUP_SCAN_MS:5000}
   redis:
     key-prefix: ${PEARPROGRAM_REDIS_KEY_PREFIX:pearprogram}
+    connection-initial-delay-ms: ${PEARPROGRAM_REDIS_CONNECTION_INITIAL_DELAY_MS:5000}
+    connection-retry-ms: ${PEARPROGRAM_REDIS_CONNECTION_RETRY_MS:30000}
   realtime:
     redis-broadcast-enabled: ${PEARPROGRAM_REALTIME_REDIS_BROADCAST_ENABLED:true}
     redis-broadcast-retry-ms: ${PEARPROGRAM_REALTIME_REDIS_BROADCAST_RETRY_MS:30000}
