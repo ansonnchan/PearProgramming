@@ -1,10 +1,32 @@
-# PearProgram
+# Pear Programming
 
-PearProgram is a browser-based collaborative code editor. It uses a split real-time architecture:
+Pear Programming is a browser-based collaborative code editor. It uses a split real-time architecture:
 
 - Spring Boot owns rooms, chat, cursors, presence, room permissions, AI proxying, cleanup, and metrics.
 - A separate Node `y-websocket` service owns Yjs CRDT document synchronization and optional Redis-backed update persistence.
 - React, Monaco, Yjs, SockJS/STOMP, and Tailwind power the browser app.
+
+## Preview 
+
+<p align="center">
+  <img src="assets/pear-program-pic1.png" alt="pear-program homepage" width="800">
+  <br>
+Pear Programming home page</em>
+</p>
+<br>
+<p align="center">
+  <img src="assets/pear-program-pic3.png" alt="stuff" width="800">
+  <br>
+  Supports multiple users in the same room and context-aware AI agent.
+</em>
+</p>
+<br>
+<p align="center">
+  <img src="assets/pear-program-pic2.png" alt="stuff" width="800">
+  <br>
+  Type in real time and see what other users write (like Google Docs).
+</em>
+</p>
 
 ## Repository Layout
 
