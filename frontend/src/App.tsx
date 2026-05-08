@@ -55,7 +55,7 @@ const ROOM_SESSION_STORAGE_KEY = 'pearprogram-room-session';
 const CONNECTION_SESSION_STORAGE_KEY = 'pearprogram-connection-session';
 const CONTENT_SYNC_DELAY_MS = 250;
 const BACKEND_WAKE_URL = buildWakeUrl(API_BASE_URL, '/healthz');
-const REALTIME_WAKE_URL = YJS_URL ? buildWakeUrl(webSocketToHttpUrl(YJS_URL), '/health') : '';
+const REALTIME_WAKE_URL = 'https://pear-program-realtime.onrender.com/health';
 
 const FALLBACK_ROOM: Room = {
   code: 'LOCAL1',
