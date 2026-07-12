@@ -2,8 +2,6 @@ package com.pearprogram.realtime;
 
 import com.pearprogram.auth.GuestPrincipal;
 import com.pearprogram.ai.AiParticipantService;
-import com.pearprogram.ai.AiAnnotationDto;
-import com.pearprogram.ai.AiAnnotationService;
 import com.pearprogram.rooms.EphemeralRoomStateService;
 import com.pearprogram.rooms.RoomAccessDto;
 import com.pearprogram.rooms.RoomService;
@@ -22,7 +20,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.util.UUID;
 import java.security.Principal;
 
 @Controller
@@ -31,7 +28,6 @@ public class RoomEventController {
     private final RoomService roomService;
     private final EphemeralRoomStateService roomStateService;
     private final AiParticipantService aiParticipantService;
-    private final AiAnnotationService aiAnnotationService;
     private final MeterRegistry meterRegistry;
 
     public RoomEventController(
@@ -39,14 +35,12 @@ public class RoomEventController {
             RoomService roomService,
             EphemeralRoomStateService roomStateService,
             AiParticipantService aiParticipantService,
-            AiAnnotationService aiAnnotationService,
             @Nullable MeterRegistry meterRegistry
     ) {
         this.broadcastService = broadcastService;
         this.roomService = roomService;
         this.roomStateService = roomStateService;
         this.aiParticipantService = aiParticipantService;
-        this.aiAnnotationService = aiAnnotationService;
         this.meterRegistry = meterRegistry;
     }
 
@@ -82,9 +76,6 @@ public class RoomEventController {
                     true,
                 OffsetDateTime.now()
             ));
-            if (aiParticipantService.usesPlaceholderResponses()) {
-            maybeCreatePlaceholderAnnotation(code, inbound, principal.displayName());
-            }
         }
     }
 
@@ -211,28 +202,6 @@ public class RoomEventController {
                     .tag("room", code)
                     .register(meterRegistry)
                     .increment();
-        }
-    }
-
-    private void maybeCreatePlaceholderAnnotation(String roomCode, ChatInboundMessage inbound, String displayName) {
-        if (inbound.currentFileId() == null || inbound.currentFileId().isBlank()) {
-            return;
-        }
-
-        try {
-            UUID fileId = UUID.fromString(inbound.currentFileId());
-            int line = inbound.currentLine() == null || inbound.currentLine() < 1 ? 1 : inbound.currentLine();
-            AiAnnotationDto annotation = aiAnnotationService.createPlaceholderAnnotation(
-                    roomCode,
-                    fileId,
-                    line,
-                    displayName
-            );
-            if (annotation != null) {
-                broadcastService.broadcast("/topic/room/" + roomCode + "/annotations", annotation);
-            }
-        } catch (IllegalArgumentException ignored) {
-            // Local fallback file ids are not UUIDs, so the frontend handles placeholder annotations itself.
         }
     }
 

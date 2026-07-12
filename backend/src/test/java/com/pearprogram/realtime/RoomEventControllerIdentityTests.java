@@ -1,6 +1,5 @@
 package com.pearprogram.realtime;
 
-import com.pearprogram.ai.AiAnnotationService;
 import com.pearprogram.ai.AiParticipantService;
 import com.pearprogram.auth.GuestPrincipal;
 import com.pearprogram.rooms.EphemeralRoomStateService;
@@ -25,7 +24,6 @@ class RoomEventControllerIdentityTests {
                 mock(RoomService.class),
                 mock(EphemeralRoomStateService.class),
                 mock(AiParticipantService.class),
-                mock(AiAnnotationService.class),
                 null
         );
         GuestPrincipal principal = new GuestPrincipal(UUID.randomUUID(), "Authenticated User", null);

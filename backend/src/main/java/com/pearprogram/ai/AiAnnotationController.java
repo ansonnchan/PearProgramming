@@ -40,9 +40,7 @@ public class AiAnnotationController {
     public AiAnnotationDto create(@PathVariable String code, @Valid @RequestBody CreateAnnotationRequest request, Authentication authentication) {
         roomService.requireActiveMember(code, identities.requirePrincipal(authentication).id());
         AiAnnotationDto annotation = annotationService.create(code, request);
-        if (annotation != null) {
-            broadcastService.broadcast("/topic/room/" + code + "/annotations", annotation);
-        }
+        broadcastService.broadcast("/topic/room/" + code + "/annotations", annotation);
         return annotation;
     }
 

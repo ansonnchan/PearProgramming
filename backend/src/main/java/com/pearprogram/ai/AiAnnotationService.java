@@ -1,6 +1,8 @@
 package com.pearprogram.ai;
 
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
@@ -12,17 +14,17 @@ public class AiAnnotationService {
     }
 
     public AiAnnotationDto create(String roomCode, CreateAnnotationRequest request) {
-        return null;
-    }
-
-    public AiAnnotationDto createPlaceholderAnnotation(String roomCode, UUID fileId, int line, String displayName) {
-        String user = displayName == null || displayName.isBlank() ? "A teammate" : displayName;
-        String content = user + " is working near line " + line
-                + ". Placeholder AI would compare this edit against recent diffs before making a concrete suggestion.";
-        return null;
+        throw unavailable();
     }
 
     public void dismiss(UUID annotationId) {
-        // No-op without a database; annotations are emitted as transient realtime events.
+        throw unavailable();
+    }
+
+    private ResponseStatusException unavailable() {
+        return new ResponseStatusException(
+                HttpStatus.NOT_IMPLEMENTED,
+                "Persistent annotations are unavailable until database persistence is configured"
+        );
     }
 }
