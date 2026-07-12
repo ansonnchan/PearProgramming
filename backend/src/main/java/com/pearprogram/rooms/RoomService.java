@@ -72,6 +72,14 @@ public class RoomService {
         return roomStateService.roomAccess(normalized, sessionId, displayName);
     }
 
+    public void requireActiveMember(String code, String userId) {
+        String normalized = normalizeRoomCode(code);
+        ensureRoomExists(normalized);
+        if (!roomStateService.isActiveMember(normalized, userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Room membership required");
+        }
+    }
+
     public List<Map<String, Object>> getRoomFiles(String code) {
         String normalized = normalizeRoomCode(code);
         ensureRoomExists(normalized);

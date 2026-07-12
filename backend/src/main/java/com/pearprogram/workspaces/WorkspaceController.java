@@ -1,6 +1,8 @@
 package com.pearprogram.workspaces;
 
+import com.pearprogram.auth.GuestIdentityService;
 import jakarta.validation.Valid;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,18 +16,20 @@ import java.util.UUID;
 @RequestMapping("/api/workspaces")
 public class WorkspaceController {
     private final WorkspaceService workspaceService;
+    private final GuestIdentityService identities;
 
-    public WorkspaceController(WorkspaceService workspaceService) {
+    public WorkspaceController(WorkspaceService workspaceService, GuestIdentityService identities) {
         this.workspaceService = workspaceService;
+        this.identities = identities;
     }
 
     @PostMapping
-    public WorkspaceDto create(@Valid @RequestBody CreateWorkspaceRequest request) {
-        return workspaceService.createWorkspace(request.name());
+    public WorkspaceDto create(@Valid @RequestBody CreateWorkspaceRequest request, Authentication authentication) {
+        return workspaceService.createWorkspace(request.name(), identities.requirePrincipal(authentication).id());
     }
 
     @GetMapping("/{workspaceId}")
-    public WorkspaceDto get(@PathVariable UUID workspaceId) {
-        return workspaceService.getWorkspace(workspaceId);
+    public WorkspaceDto get(@PathVariable UUID workspaceId, Authentication authentication) {
+        return workspaceService.getWorkspace(workspaceId, identities.requirePrincipal(authentication).id());
     }
 }

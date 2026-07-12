@@ -446,6 +446,26 @@ public class EphemeralRoomStateService {
         );
     }
 
+    public Optional<ActiveMember> activeMember(String code, String userId) {
+        String normalizedUserId = normalizeSessionId(userId);
+        return executeWithFallback(
+                () -> activeRedisMembers(code).stream()
+                        .filter(member -> member.userId().equals(normalizedUserId))
+                        .findFirst(),
+                () -> {
+                    LocalRoomState state = localRooms.get(code);
+                    if (state == null) {
+                        return Optional.empty();
+                    }
+                    pruneExpiredLocalMembers(code, state, false);
+                    return state.members.values().stream()
+                            .filter(member -> member.userId.equals(normalizedUserId))
+                            .map(member -> new ActiveMember(member.userId, member.displayName, member.cursorColor))
+                            .findFirst();
+                }
+        );
+    }
+
     @Scheduled(fixedDelay = 60_000)
     void expireStaleRooms() {
         executeWithFallback(

@@ -1,5 +1,6 @@
 package com.pearprogram.realtime;
 
+import com.pearprogram.auth.GuestPrincipal;
 import com.pearprogram.ai.AiParticipantService;
 import com.pearprogram.ai.AiAnnotationDto;
 import com.pearprogram.ai.AiAnnotationService;
@@ -13,12 +14,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.lang.Nullable;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import java.security.Principal;
 
 @Controller
 public class RoomEventController {
@@ -46,16 +51,17 @@ public class RoomEventController {
     }
 
     @MessageMapping("/room/{code}/chat")
-    public void chat(@DestinationVariable String code, ChatInboundMessage inbound) {
+    public void chat(@DestinationVariable String code, ChatInboundMessage inbound, Principal authentication) {
         if (!roomStateService.roomExists(code)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Room not found");
         }
 
+        GuestPrincipal principal = principal(authentication);
         incrementChatRate(code);
         broadcastService.broadcast("/topic/room/" + code + "/chat", new ChatOutboundMessage(
             java.util.UUID.randomUUID(),
-                inbound.userId(),
-                inbound.displayName() == null || inbound.displayName().isBlank() ? "Guest" : inbound.displayName(),
+                principal.id(),
+                principal.displayName(),
             inbound.content(),
                 false,
             OffsetDateTime.now()
@@ -67,7 +73,7 @@ public class RoomEventController {
                     null,
                     "AI",
                 aiParticipantService.chatResponse(
-                    inbound.displayName(),
+                    principal.displayName(),
                     inbound.currentFile(),
                     inbound.content(),
                     inbound.currentLine(),
@@ -77,18 +83,30 @@ public class RoomEventController {
                 OffsetDateTime.now()
             ));
             if (aiParticipantService.usesPlaceholderResponses()) {
-            maybeCreatePlaceholderAnnotation(code, inbound);
+            maybeCreatePlaceholderAnnotation(code, inbound, principal.displayName());
             }
         }
     }
 
     @MessageMapping("/room/{code}/cursors")
-    public void cursor(@DestinationVariable String code, CursorMessage cursor) {
-        broadcastService.broadcast("/topic/room/" + code + "/cursors", cursor);
+    public void cursor(@DestinationVariable String code, CursorMessage cursor, Principal authentication) {
+        GuestPrincipal principal = principal(authentication);
+        broadcastService.broadcast("/topic/room/" + code + "/cursors", new CursorMessage(
+                principal.id(),
+                principal.displayName(),
+                cursor.fileId(),
+                cursor.line(),
+                cursor.col(),
+                cursor.color(),
+                cursor.sentAt()
+        ));
     }
 
     @MessageMapping("/room/{code}/members")
-    public void member(@DestinationVariable String code, MemberEvent event) {
+    public void member(@DestinationVariable String code, MemberEvent inbound,
+                       @Header("simpSessionId") String connectionId, Principal authentication) {
+        GuestPrincipal principal = principal(authentication);
+        MemberEvent event = trustedMemberEvent(code, inbound, principal, connectionId);
         MemberEvent outbound = event;
         MemberEvent followUp = null;
         if ("joined".equals(event.type())) {
@@ -132,16 +150,26 @@ public class RoomEventController {
                 }
             }
         } else if ("lead-transferred".equals(event.type())) {
+            requireLead(code, principal.id());
             String nextLead = event.leadUserId() == null || event.leadUserId().isBlank()
                     ? event.targetUserId()
                     : event.leadUserId();
+            if (nextLead == null || roomStateService.activeMember(code, nextLead).isEmpty()) {
+                throw new AccessDeniedException("New lead must be an active room member");
+            }
             outbound = withRoomState(event, roomStateService.transferLead(code, nextLead));
         } else if ("lead-removed".equals(event.type())) {
+            requireLead(code, principal.id());
             outbound = withRoomState(event, roomStateService.transferLead(code, null));
         } else if ("lock-changed".equals(event.type()) && event.locked() != null) {
+            requireLead(code, principal.id());
             outbound = withRoomState(event, roomStateService.setLocked(code, event.userId(), event.locked()));
         } else if ("room-closed".equals(event.type())) {
+            requireLead(code, principal.id());
             roomService.closeRoom(code);
+        } else if ("lead-sync".equals(event.type())) {
+            requireLead(code, principal.id());
+            outbound = withRoomState(event, roomStateService.roomAccess(code, principal.id(), principal.displayName()));
         } else {
             outbound = withRoomState(event, roomStateService.roomAccess(code, event.sessionId(), event.displayName()));
         }
@@ -152,7 +180,9 @@ public class RoomEventController {
     }
 
     @MessageMapping("/room/{code}/project-switch")
-    public void projectSwitch(@DestinationVariable String code, ProjectSwitchEvent event) {
+    public void projectSwitch(@DestinationVariable String code, ProjectSwitchEvent inbound, Principal authentication) {
+        GuestPrincipal principal = principal(authentication);
+        ProjectSwitchEvent event = trustedProjectSwitchEvent(inbound, principal);
         if (event.files() != null && "file-content-updated".equals(event.type())) {
             roomService.upsertRoomFiles(code, event.files());
         } else if (event.files() != null && ("accepted".equals(event.type()) || "sync".equals(event.type()) || "files-updated".equals(event.type()))) {
@@ -184,7 +214,7 @@ public class RoomEventController {
         }
     }
 
-    private void maybeCreatePlaceholderAnnotation(String roomCode, ChatInboundMessage inbound) {
+    private void maybeCreatePlaceholderAnnotation(String roomCode, ChatInboundMessage inbound, String displayName) {
         if (inbound.currentFileId() == null || inbound.currentFileId().isBlank()) {
             return;
         }
@@ -196,7 +226,7 @@ public class RoomEventController {
                     roomCode,
                     fileId,
                     line,
-                    inbound.displayName()
+                    displayName
             );
             if (annotation != null) {
                 broadcastService.broadcast("/topic/room/" + roomCode + "/annotations", annotation);
@@ -219,6 +249,63 @@ public class RoomEventController {
                 event.targetUserId(),
                 event.targetUserName(),
                 state.locked(),
+                event.at()
+        );
+    }
+
+    private GuestPrincipal principal(Principal principal) {
+        if (principal instanceof Authentication authentication
+                && authentication.getPrincipal() instanceof GuestPrincipal guestPrincipal) {
+            return guestPrincipal;
+        }
+        throw new AccessDeniedException("Authenticated guest principal required");
+    }
+
+    private void requireLead(String code, String userId) {
+        if (!userId.equals(roomStateService.getLeadUserId(code))) {
+            throw new AccessDeniedException("Lead Pear permission required");
+        }
+    }
+
+    private MemberEvent trustedMemberEvent(String code, MemberEvent event, GuestPrincipal principal, String connectionId) {
+        String targetName = event.targetUserId() == null
+                ? null
+                : roomStateService.activeMember(code, event.targetUserId())
+                        .map(EphemeralRoomStateService.ActiveMember::displayName)
+                        .orElse(null);
+        return new MemberEvent(
+                event.type(),
+                principal.id(),
+                principal.id(),
+                connectionId,
+                principal.displayName(),
+                event.color(),
+                principal.avatarUrl(),
+                event.leadUserId(),
+                event.targetUserId(),
+                targetName,
+                event.locked(),
+                event.at()
+        );
+    }
+
+    private ProjectSwitchEvent trustedProjectSwitchEvent(ProjectSwitchEvent event, GuestPrincipal principal) {
+        boolean vote = "vote".equals(event.type()) || "declined".equals(event.type());
+        return new ProjectSwitchEvent(
+                event.type(),
+                event.proposalId(),
+                event.currentFolder(),
+                event.newFolder(),
+                principal.id(),
+                principal.displayName(),
+                event.targetUserId(),
+                vote ? principal.id() : event.voterId(),
+                vote ? principal.displayName() : event.voterName(),
+                event.requiredUserIds(),
+                event.approvedUserIds(),
+                event.replaceExisting(),
+                event.openUploaded(),
+                event.files(),
                 event.at()
         );
     }

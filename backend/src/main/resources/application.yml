@@ -1,6 +1,8 @@
 spring:
   application:
     name: pearprogram-backend
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   data:
     redis:
       host: ${SPRING_REDIS_HOST:localhost}
@@ -17,6 +19,13 @@ spring:
           max-wait: ${SPRING_REDIS_POOL_MAX_WAIT:5s}
 server:
   port: ${PORT:${SERVER_PORT:8081}}
+  servlet:
+    session:
+      timeout: ${AUTH_SESSION_TIMEOUT:12h}
+      cookie:
+        http-only: true
+        secure: ${AUTH_COOKIE_SECURE:false}
+        same-site: ${AUTH_COOKIE_SAME_SITE:lax}
 
 pearprogram:
   cors:
@@ -33,6 +42,8 @@ pearprogram:
     redis-broadcast-retry-ms: ${PEARPROGRAM_REALTIME_REDIS_BROADCAST_RETRY_MS:30000}
   ai:
     placeholder-mode: ${PEARPROGRAM_AI_PLACEHOLDER:false}
+  auth:
+    realtime-token-ttl: ${AUTH_REALTIME_TOKEN_TTL:10m}
   execution:
     max-source-bytes: ${EXECUTION_MAX_SOURCE_BYTES:100000}
     max-stdin-bytes: ${EXECUTION_MAX_STDIN_BYTES:20000}
