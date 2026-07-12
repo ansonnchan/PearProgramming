@@ -499,6 +499,7 @@ export default function App() {
       openRoom(savedSession.room, savedSession.files, false, savedSession);
       void (async () => {
         try {
+          await apiJoinRoom(savedSession.room.code);
           const freshRoom = await getRoom(savedSession.room.code);
           const roomFiles = await getRoomFiles(savedSession.room.code).catch(() => savedSession.files);
           openRoom(freshRoom, roomFiles.length > 0 ? roomFiles : savedSession.files, false, savedSession);

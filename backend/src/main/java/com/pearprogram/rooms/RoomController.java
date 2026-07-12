@@ -55,7 +55,7 @@ public class RoomController {
     @GetMapping("/{code}")
     public RoomDto getByCode(@PathVariable String code, Authentication authentication) {
         log.info("Get room request for code={}", code);
-        roomService.requireActiveMember(code, identities.requirePrincipal(authentication).id());
+        roomService.requireDurableMember(code, identities.requirePrincipal(authentication).id());
         return roomService.getRoom(code);
     }
 
@@ -69,7 +69,7 @@ public class RoomController {
     @GetMapping("/{code}/files")
     public List<Map<String, Object>> files(@PathVariable String code, Authentication authentication) {
         log.info("Room files request for code={}", code);
-        roomService.requireActiveMember(code, identities.requirePrincipal(authentication).id());
+        roomService.requireDurableMember(code, identities.requirePrincipal(authentication).id());
         return roomService.getRoomFiles(code);
     }
 
@@ -77,7 +77,7 @@ public class RoomController {
     public List<Map<String, Object>> saveFiles(@PathVariable String code, @RequestBody RoomFilesRequest request, Authentication authentication) {
         int count = request == null || request.files() == null ? 0 : request.files().size();
         log.info("Save room files request for code={} count={}", code, count);
-        roomService.requireActiveMember(code, identities.requirePrincipal(authentication).id());
+        roomService.requireDurableMember(code, identities.requirePrincipal(authentication).id());
         return roomService.saveRoomFiles(code, request == null ? List.of() : request.files());
     }
 }
