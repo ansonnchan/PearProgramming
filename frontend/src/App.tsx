@@ -32,17 +32,23 @@ import {
   ApiError,
   createFile,
   createRoom,
+  createWorkspace,
   dismissAnnotation,
   getExecution,
   getRoom,
   getRoomFiles,
   getRoomAccess,
+  getStompConnectHeaders,
   joinRoom as apiJoinRoom,
   listAnnotations,
   listChatHistory,
+  logoutAuthSession,
+  restoreAuthSession,
+  signInGuest,
   STOMP_URL,
   saveRoomFiles,
   submitExecution,
+  updateAuthProfile,
   updateFileContent,
   uploadWorkspaceFiles,
   YJS_URL
@@ -53,7 +59,7 @@ import pearLogoUrl from '../assets/favicon.png';
 import pearChibiUrl from '../assets/pear_chibi.jpg';
 import type { UploadCandidate, UploadReadResult } from './uploads';
 import { projectNameForPaths, readDroppedUploadCandidates, readUploadCandidates, UPLOAD_ACCEPT } from './uploads';
-import type { AiAnnotation, ChatMessage, CursorMessage, ExecutionResult, Member, ProjectSwitchEvent, Room, RoomSessionState, WorkspaceFile } from './types';
+import type { AiAnnotation, AuthSession, ChatMessage, CursorMessage, ExecutionResult, Member, ProjectSwitchEvent, Room, RoomSessionState, WorkspaceFile } from './types';
 
 const DEFAULT_COLOR = '#000000';
 const ROOM_SESSION_STORAGE_KEY = 'pearprogram-room-session';
@@ -175,7 +181,9 @@ export default function App() {
   const [createItemKind, setCreateItemKind] = useState<'file' | 'folder' | null>(null);
   const [createItemName, setCreateItemName] = useState('');
   const [createItemError, setCreateItemError] = useState('');
-  const [user, setUser] = useState<Member>(() => getOrCreateLocalUser());
+  const [user, setUser] = useState<Member>({ id: '', name: 'You', color: DEFAULT_COLOR });
+  const [authReady, setAuthReady] = useState(false);
+  const [realtimeToken, setRealtimeToken] = useState('');
   const [connectionId] = useState(() => getOrCreateConnectionId());
   const [editorMountVersion, setEditorMountVersion] = useState(0);
   const [executionLanguage, setExecutionLanguage] = useState<ExecutionLanguage>('javascript');
@@ -240,6 +248,40 @@ export default function App() {
   const bootstrappedRoomRef = useRef(false);
   const executionSequenceRef = useRef(0);
 
+  useEffect(() => {
+    let cancelled = false;
+    restoreAuthSession()
+      .then((session) => {
+        if (cancelled || !session) {
+          return;
+        }
+        applyAuthenticatedSession(session);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) {
+          setAuthReady(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authReady || !user.id) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void restoreAuthSession().then((session) => {
+        if (session) {
+          applyAuthenticatedSession(session);
+        }
+      }).catch(() => undefined);
+    }, 8 * 60_000);
+    return () => window.clearInterval(timer);
+  }, [authReady, user.id]);
+
   const handleJoinRoom = useCallback(async (rawCode: string, displayName?: string, replaceUrl = true) => {
     const code = normalizeRoomCode(rawCode);
     if (!isValidRoomCode(code)) {
@@ -251,7 +293,7 @@ export default function App() {
     setLandingError('');
     setLandingNotice('');
     try {
-      const access = await getRoomAccess(code, user.id, displayName || user.name);
+      const access = await getRoomAccess(code);
       if (!access.canJoin) {
         if (access.reason === 'locked') {
           showToast('Room is Locked. Contact the room owner if this is a mistake.');
@@ -263,7 +305,7 @@ export default function App() {
         setJoiningRoom(false);
         return;
       }
-      await apiJoinRoom(code, user.id, displayName);
+      await apiJoinRoom(code);
       const joinedRoom = await getRoom(code);
       const roomFiles = await getRoomFiles(code).catch(() => []);
       openRoom(joinedRoom, roomFiles, replaceUrl);
@@ -275,14 +317,14 @@ export default function App() {
     } finally {
       setJoiningRoom(false);
     }
-  }, [user.id, user.name]);
+  }, []);
 
   const handleCreateRoom = useCallback(async () => {
     setCreatingRoom(true);
     setLandingError('');
     setLandingNotice('');
     try {
-      const createResponse = await createRoom(user.id, user.name);
+      const createResponse = await createRoom();
       const createdRoom = await getRoom(createResponse.code);
       openRoom(createdRoom, [], true);
     } catch (error) {
@@ -291,7 +333,7 @@ export default function App() {
     } finally {
       setCreatingRoom(false);
     }
-  }, [user.id, user.name]);
+  }, []);
 
   const scheduleAutosave = useCallback((fileId: string, content: string) => {
     const currentRoom = roomRef.current;
@@ -446,14 +488,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (bootstrappedRoomRef.current) {
+    if (!authReady || bootstrappedRoomRef.current) {
       return;
     }
     bootstrappedRoomRef.current = true;
 
     const joinCode = getJoinCode();
     const savedSession = loadRoomSession();
-    if (savedSession?.room?.code && (!joinCode || normalizeRoomCode(joinCode) === savedSession.room.code)) {
+    if (user.id && savedSession?.room?.code && (!joinCode || normalizeRoomCode(joinCode) === savedSession.room.code)) {
       openRoom(savedSession.room, savedSession.files, false, savedSession);
       void (async () => {
         try {
@@ -472,7 +514,7 @@ export default function App() {
       setLandingCode(code);
       requestRoomEntry('join', code);
     }
-  }, []);
+  }, [authReady, user.id]);
 
   useEffect(() => {
     if (!room) {
@@ -548,7 +590,7 @@ export default function App() {
     }
 
     const client = new Client({
-      connectHeaders: {},
+      connectHeaders: getStompConnectHeaders(),
       reconnectDelay: 2000,
       webSocketFactory: () => new SockJS(STOMP_URL),
       onConnect: () => {
@@ -690,7 +732,13 @@ export default function App() {
     }
 
     const ydoc = new Y.Doc();
-    const provider = new WebsocketProvider(YJS_URL, `${currentRoom.code}/${currentFile.id}`, ydoc);
+    if (!realtimeToken) {
+      setSyncStatus('Authentication required');
+      return;
+    }
+    const provider = new WebsocketProvider(YJS_URL, `${currentRoom.code}/${currentFile.id}`, ydoc, {
+      params: { access_token: realtimeToken }
+    });
     const yText = ydoc.getText('monaco');
     const yMeta = ydoc.getMap('meta');
 
@@ -788,7 +836,7 @@ export default function App() {
         ydocRef.current = null;
       }
     };
-  }, [activeFile?.id, editorMountVersion, room?.code, user.avatarUrl, user.color, user.id, user.name]);
+  }, [activeFile?.id, editorMountVersion, realtimeToken, room?.code, user.avatarUrl, user.color, user.id, user.name]);
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -972,6 +1020,7 @@ export default function App() {
                   </button>
                 )}
                 <button onClick={runPearMenuAction(handleLeaveRoom)} type="button">Leave Room</button>
+                <button onClick={runPearMenuAction(() => void handleSignOut())} type="button">Sign Out</button>
                 {isLeadPear && (
                   <button className="danger-menu-item" onClick={runPearMenuAction(handleCloseRoom)} type="button">
                     Close Room
@@ -1401,14 +1450,14 @@ export default function App() {
     }
 
     const action = pendingRoomAction;
-    const updated = {
-      ...user,
-      name: displayName,
-      avatarUrl: entryProfileAvatar
-    };
-    userRef.current = updated;
-    setUser(updated);
-    sessionStorage.setItem('pearprogram-user', JSON.stringify(updated));
+    let session: AuthSession;
+    try {
+      session = await signInGuest(displayName, entryProfileAvatar);
+    } catch {
+      setEntryProfileError('Could not create a secure session. Try again.');
+      return;
+    }
+    applyAuthenticatedSession(session);
     setEntryProfileOpen(false);
     setPendingRoomAction(null);
     setEntryProfileError('');
@@ -1538,7 +1587,7 @@ export default function App() {
     setExecutionResult(null);
 
     try {
-      let current = await submitExecution(currentRoom.code, userRef.current.id, crypto.randomUUID(), {
+      let current = await submitExecution(currentRoom.code, crypto.randomUUID(), {
         language: executionLanguage,
         sourceCode,
         stdin: executionStdin
@@ -1557,7 +1606,7 @@ export default function App() {
           return;
         }
         try {
-          current = await getExecution(currentRoom.code, current.executionId, userRef.current.id);
+          current = await getExecution(currentRoom.code, current.executionId);
           consecutiveFailures = 0;
           if (executionSequenceRef.current === sequence) {
             setExecutionResult(current);
@@ -1827,6 +1876,18 @@ export default function App() {
     returnToLanding();
   }
 
+  async function handleSignOut() {
+    publishLeftMemberEvent();
+    try {
+      await logoutAuthSession();
+    } finally {
+      userRef.current = { id: '', name: 'You', color: DEFAULT_COLOR };
+      setUser(userRef.current);
+      setRealtimeToken('');
+      returnToLanding('Signed out.');
+    }
+  }
+
   function handleCloseRoom() {
     if (!isLeadPear || !window.confirm('Close this room for everyone?')) {
       return;
@@ -1932,21 +1993,26 @@ export default function App() {
       return;
     }
 
-    if (currentKind === 'file') {
-      const workspaceId = crypto.randomUUID();
-      const local = await createWorkspaceFile(workspaceId, resolvedPath, '', user.id);
-      const nextFiles = applyUploadedFiles([local], false, true);
-      persistRoomFilesSnapshot(nextFiles);
-      queueOrPublishProjectSwitch(createFileTreeEvent(nextFiles, false, false));
-      openFileTab(local.id);
-      expandForPath(resolvedPath);
-    } else {
-      const workspaceId = crypto.randomUUID();
-      const local = await createWorkspaceFile(workspaceId, `${resolvedPath}/.gitkeep`, '', user.id);
-      const nextFiles = applyUploadedFiles([local], false, false);
-      persistRoomFilesSnapshot(nextFiles);
-      queueOrPublishProjectSwitch(createFileTreeEvent(nextFiles, false, false));
-      expandForPath(resolvedPath);
+    try {
+      const workspace = await createWorkspace(`${roomRef.current?.code ?? 'workspace'}-${resolvedPath}`);
+      const workspaceId = workspace.id;
+      if (currentKind === 'file') {
+        const local = await createWorkspaceFile(workspaceId, resolvedPath, '', user.id);
+        const nextFiles = applyUploadedFiles([local], false, true);
+        persistRoomFilesSnapshot(nextFiles);
+        queueOrPublishProjectSwitch(createFileTreeEvent(nextFiles, false, false));
+        openFileTab(local.id);
+        expandForPath(resolvedPath);
+      } else {
+        const local = await createWorkspaceFile(workspaceId, `${resolvedPath}/.gitkeep`, '', user.id);
+        const nextFiles = applyUploadedFiles([local], false, false);
+        persistRoomFilesSnapshot(nextFiles);
+        queueOrPublishProjectSwitch(createFileTreeEvent(nextFiles, false, false));
+        expandForPath(resolvedPath);
+      }
+    } catch {
+      setCreateItemError('Could not create this item in your authenticated workspace.');
+      return;
     }
 
     closeCreateItemModal();
@@ -2052,7 +2118,15 @@ export default function App() {
     }
 
     setSaveState('saving');
-    const workspaceId = crypto.randomUUID();
+    let workspace;
+    try {
+      workspace = await createWorkspace(projectNameForPaths(candidates.map((candidate) => candidate.path)));
+    } catch {
+      setUploadNotice('Upload requires an active authenticated session. Sign in again and retry.');
+      setSaveState('error');
+      return [];
+    }
+    const workspaceId = workspace.id;
     try {
       const persisted = await uploadWorkspaceFiles(workspaceId, candidates, replaceExisting);
       const uploaded = persisted.length > 0
@@ -2190,7 +2264,9 @@ export default function App() {
     seedingFileIdsRef.current.add(file.id);
     return new Promise<void>((resolve) => {
       const ydoc = new Y.Doc();
-      const provider = new WebsocketProvider(YJS_URL, `${roomCode}/${file.id}`, ydoc);
+      const provider = new WebsocketProvider(YJS_URL, `${roomCode}/${file.id}`, ydoc, {
+        params: { access_token: realtimeToken }
+      });
       const yText = ydoc.getText('monaco');
       const yMeta = ydoc.getMap('meta');
       let finished = false;
@@ -2769,15 +2845,16 @@ export default function App() {
     setProfileDraftAvatar(await fileToDataUrl(file));
   }
 
-  function saveProfile() {
-    const updated = {
-      ...user,
-      name: profileDraftName.trim() || 'You',
-      avatarUrl: profileDraftAvatar
-    };
-    userRef.current = updated;
-    setUser(updated);
-    sessionStorage.setItem('pearprogram-user', JSON.stringify(updated));
+  async function saveProfile() {
+    let session: AuthSession;
+    try {
+      session = await updateAuthProfile(profileDraftName.trim() || user.name, profileDraftAvatar);
+    } catch {
+      showToast('Could not update your server profile.');
+      return;
+    }
+    applyAuthenticatedSession(session);
+    const updated = userRef.current;
     setProfileOpen(false);
 
     const currentRoom = roomRef.current;
@@ -2799,6 +2876,18 @@ export default function App() {
         })
       });
     }
+  }
+
+  function applyAuthenticatedSession(session: AuthSession) {
+    const authenticatedUser: Member = {
+      id: session.userId,
+      name: session.displayName,
+      color: DEFAULT_COLOR,
+      avatarUrl: session.avatarUrl ?? undefined
+    };
+    userRef.current = authenticatedUser;
+    setUser(authenticatedUser);
+    setRealtimeToken(session.realtimeToken);
   }
 }
 
@@ -3282,26 +3371,6 @@ function toTreeNode(node: MutableTreeNode): TreeNode {
 function getJoinCode() {
   const match = window.location.pathname.match(/^\/(?:join|room)\/([^/]+)/);
   return match?.[1] ?? null;
-}
-
-function getOrCreateLocalUser(): Member {
-  const stored = sessionStorage.getItem('pearprogram-user');
-  if (stored) {
-    try {
-      return JSON.parse(stored) as Member;
-    } catch {
-      sessionStorage.removeItem('pearprogram-user');
-    }
-  }
-
-  const id = crypto.randomUUID();
-  const user: Member = {
-    id,
-    name: 'You',
-    color: DEFAULT_COLOR
-  };
-  sessionStorage.setItem('pearprogram-user', JSON.stringify(user));
-  return user;
 }
 
 function getOrCreateConnectionId() {

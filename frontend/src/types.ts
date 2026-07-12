@@ -4,6 +4,14 @@ export type Workspace = {
   createdAt: string;
 };
 
+export type AuthSession = {
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  realtimeToken: string;
+  realtimeTokenExpiresAt: string;
+};
+
 export type Room = {
   code: string;
   active: boolean;

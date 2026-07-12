@@ -1,4 +1,4 @@
-import type { AiAnnotation, BootstrapResponse, ChatMessage, ExecutionResult, Room, RoomAccess, RoomCreateResponse, RoomJoinResponse, Workspace, WorkspaceFile } from './types';
+import type { AiAnnotation, AuthSession, BootstrapResponse, ChatMessage, ExecutionResult, Room, RoomAccess, RoomCreateResponse, RoomJoinResponse, Workspace, WorkspaceFile } from './types';
 import type { UploadCandidate } from './uploads';
 import { getOptionalUrlEnv, getRequiredUrlEnv, logResolvedFrontendEnv } from './env';
 
@@ -15,6 +15,9 @@ const rawYjsUrl = import.meta.env.PROD
 export const YJS_URL = rawYjsUrl ? toWebSocketUrl(rawYjsUrl) : '';
 
 logResolvedFrontendEnv({ apiUrl: API_BASE_URL, stompUrl: STOMP_URL, yjsUrl: YJS_URL });
+
+let csrfToken = '';
+let csrfHeaderName = 'X-XSRF-TOKEN';
 
 function toWebSocketUrl(value: string) {
   const parsed = new URL(value);
@@ -60,20 +63,20 @@ export async function getRoom(code: string): Promise<Room> {
   return getJson<Room>(`/api/rooms/${encodeURIComponent(code)}`);
 }
 
-export async function getRoomAccess(code: string, sessionId: string, displayName: string): Promise<RoomAccess> {
-  return getJson<RoomAccess>(`/api/rooms/${encodeURIComponent(code)}/access?sessionId=${encodeURIComponent(sessionId)}&displayName=${encodeURIComponent(displayName)}`);
+export async function getRoomAccess(code: string): Promise<RoomAccess> {
+  return getJson<RoomAccess>(`/api/rooms/${encodeURIComponent(code)}/access`);
 }
 
 export async function createWorkspace(name: string): Promise<Workspace> {
   return postJson<Workspace>('/api/workspaces', { name });
 }
 
-export async function createRoom(sessionId?: string, displayName?: string): Promise<RoomCreateResponse> {
-  return postJson<RoomCreateResponse>('/api/rooms/create', { sessionId, displayName });
+export async function createRoom(): Promise<RoomCreateResponse> {
+  return postJson<RoomCreateResponse>('/api/rooms/create', {});
 }
 
-export async function joinRoom(code: string, sessionId: string, displayName?: string): Promise<RoomJoinResponse> {
-  return postJson<RoomJoinResponse>('/api/rooms/join', { code, sessionId, displayName });
+export async function joinRoom(code: string): Promise<RoomJoinResponse> {
+  return postJson<RoomJoinResponse>('/api/rooms/join', { code });
 }
 
 export async function getRoomFiles(code: string): Promise<WorkspaceFile[]> {
@@ -109,20 +112,60 @@ export async function updateFileContent(fileId: string, content: string): Promis
 
 export async function submitExecution(
   roomCode: string,
-  sessionId: string,
   idempotencyKey: string,
   request: { language: string; sourceCode: string; stdin: string }
 ): Promise<ExecutionResult> {
   return requestJson<ExecutionResult>('POST', `/api/rooms/${encodeURIComponent(roomCode)}/executions`, request, {
-    'X-Pear-Session-Id': sessionId,
     'Idempotency-Key': idempotencyKey
   });
 }
 
-export async function getExecution(roomCode: string, executionId: string, sessionId: string): Promise<ExecutionResult> {
+export async function getExecution(roomCode: string, executionId: string): Promise<ExecutionResult> {
   return requestJson<ExecutionResult>('GET', `/api/rooms/${encodeURIComponent(roomCode)}/executions/${encodeURIComponent(executionId)}`, undefined, {
-    'X-Pear-Session-Id': sessionId
   });
+}
+
+export async function signInGuest(displayName: string, avatarUrl?: string): Promise<AuthSession> {
+  const session = await requestJson<AuthSession>('POST', '/api/auth/guest', { displayName, avatarUrl }, {}, false);
+  await refreshCsrfToken();
+  return session;
+}
+
+export async function restoreAuthSession(): Promise<AuthSession | null> {
+  const response = await fetch(`${API_BASE_URL}/api/auth/session`, { credentials: 'include' });
+  if (response.status === 401) {
+    csrfToken = '';
+    return null;
+  }
+  if (!response.ok) {
+    throw await toApiError('GET', '/api/auth/session', response);
+  }
+  const session = await response.json() as AuthSession;
+  await refreshCsrfToken();
+  return session;
+}
+
+export async function updateAuthProfile(displayName: string, avatarUrl?: string): Promise<AuthSession> {
+  return requestJson<AuthSession>('PATCH', '/api/auth/profile', { displayName, avatarUrl }, {});
+}
+
+export async function logoutAuthSession(): Promise<void> {
+  await requestJson<void>('POST', '/api/auth/logout', undefined, {});
+  csrfToken = '';
+}
+
+export function getStompConnectHeaders() {
+  return csrfToken ? { [csrfHeaderName]: csrfToken } : {};
+}
+
+async function refreshCsrfToken() {
+  const response = await fetch(`${API_BASE_URL}/api/auth/csrf`, { credentials: 'include' });
+  if (!response.ok) {
+    throw await toApiError('GET', '/api/auth/csrf', response);
+  }
+  const body = await response.json() as { token: string; headerName: string };
+  csrfToken = body.token;
+  csrfHeaderName = body.headerName;
 }
 
 
@@ -137,7 +180,9 @@ export async function listAnnotations(code: string, fileId: string): Promise<AiA
 
 export async function dismissAnnotation(annotationId: string): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/api/annotations/${annotationId}`, {
-    method: 'DELETE'
+    method: 'DELETE',
+    credentials: 'include',
+    headers: await mutationHeaders()
   });
   if (!response.ok) {
     throw new Error(`DELETE /api/annotations/${annotationId} failed with ${response.status}`);
@@ -145,7 +190,7 @@ export async function dismissAnnotation(annotationId: string): Promise<void> {
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+  const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
   if (!response.ok) {
     throw await toApiError('GET', path, response);
   }
@@ -153,54 +198,44 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if (!response.ok) {
-    throw await toApiError('POST', path, response);
-  }
-  return response.json() as Promise<T>;
+  return requestJson<T>('POST', path, body, {});
 }
 
 async function putJson<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if (!response.ok) {
-    throw await toApiError('PUT', path, response);
-  }
-  return response.json() as Promise<T>;
+  return requestJson<T>('PUT', path, body, {});
 }
 
 async function patchJson<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if (!response.ok) {
-    throw await toApiError('PATCH', path, response);
-  }
-  return response.json() as Promise<T>;
+  return requestJson<T>('PATCH', path, body, {});
 }
 
-async function requestJson<T>(method: 'GET' | 'POST', path: string, body: unknown, headers: Record<string, string>): Promise<T> {
+async function requestJson<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, body: unknown,
+                              headers: Record<string, string>, includeCsrf = method !== 'GET'): Promise<T> {
+  const secureHeaders = includeCsrf ? await mutationHeaders() : {};
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method,
     headers: {
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...secureHeaders,
       ...headers
     },
-    body: body === undefined ? undefined : JSON.stringify(body)
+    body: body === undefined ? undefined : JSON.stringify(body),
+    credentials: 'include'
   });
   if (!response.ok) {
     throw await toApiError(method, path, response);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return response.json() as Promise<T>;
+}
+
+async function mutationHeaders() {
+  if (!csrfToken) {
+    await refreshCsrfToken();
+  }
+  return { [csrfHeaderName]: csrfToken };
 }
 
 async function toApiError(method: string, path: string, response: Response) {
