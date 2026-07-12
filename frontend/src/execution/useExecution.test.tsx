@@ -58,4 +58,17 @@ describe('useExecution', () => {
     expect(result.current.submitting).toBe(false);
     expect(getExecution).not.toHaveBeenCalled();
   });
+
+  it('cancels polling when its owner unmounts', async () => {
+    let resolveSubmission!: (value: typeof queued) => void;
+    vi.mocked(submitExecution).mockReturnValue(new Promise((resolve) => { resolveSubmission = resolve; }));
+    const { result, unmount } = renderHook(() => useExecution('file-1'));
+    act(() => {
+      void result.current.run({ roomCode: 'ABC123', language: 'python', sourceCode: 'print(1)', stdin: '' });
+    });
+
+    unmount();
+    await act(async () => resolveSubmission(queued));
+    expect(getExecution).not.toHaveBeenCalled();
+  });
 });

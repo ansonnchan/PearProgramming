@@ -32,6 +32,10 @@ export function useExecution(scopeKey: string | null) {
 
   useEffect(() => {
     clear();
+    return () => {
+      sequenceRef.current += 1;
+      submittingRef.current = false;
+    };
   }, [clear, scopeKey]);
 
   const run = useCallback(async ({ roomCode, language, sourceCode, stdin }: RunInput) => {
