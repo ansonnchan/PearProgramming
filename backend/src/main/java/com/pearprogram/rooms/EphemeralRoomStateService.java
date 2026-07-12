@@ -144,6 +144,27 @@ public class EphemeralRoomStateService {
         );
     }
 
+    public void rehydrateRoom(String code, OffsetDateTime createdAt) {
+        executeWithFallback(
+                () -> {
+                    redisTemplate.opsForHash().putIfAbsent(roomMetaKey(code), "createdAt", createdAt.toString());
+                    redisTemplate.opsForHash().putIfAbsent(roomMetaKey(code), "active", "true");
+                    redisTemplate.opsForHash().putIfAbsent(roomMetaKey(code), "locked", "false");
+                    redisTemplate.opsForValue().setIfAbsent(roomCountKey(code), "0", roomStateTtl);
+                    redisTemplate.opsForValue().setIfAbsent(roomColorCursorKey(code), "0", roomStateTtl);
+                    expireRoomKeys(code);
+                    return null;
+                },
+                () -> {
+                    LocalRoomState state = localState(code);
+                    if (state.createdAt == null) {
+                        state.createdAt = createdAt;
+                    }
+                    return null;
+                }
+        );
+    }
+
     public boolean roomExists(String code) {
         return executeWithFallback(
                 () -> Boolean.TRUE.equals(redisTemplate.hasKey(roomCountKey(code)))

@@ -243,7 +243,7 @@ public class RoomService {
         RoomEntity room = rooms.findByCodeAndActiveTrue(code)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Room not found"));
         if (!roomStateService.roomExists(code)) {
-            roomStateService.initializeRoom(code, room.getCreatedAt());
+            roomStateService.rehydrateRoom(code, room.getCreatedAt());
         }
         return room;
     }
