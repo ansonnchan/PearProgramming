@@ -1,10 +1,11 @@
 # Pear Programming
 
-Pear Programming is a browser-based collaborative code editor. It uses a split real-time architecture:
+Pear Programming is a browser-based collaborative code editor with sandboxed code execution. It uses a split real-time architecture:
 
 - Spring Boot owns rooms, chat, cursors, presence, room permissions, AI proxying, cleanup, and metrics.
 - A separate Node `y-websocket` service owns Yjs CRDT document synchronization and optional Redis-backed update persistence.
 - React, Monaco, Yjs, SockJS/STOMP, and Tailwind power the browser app.
+- Spring submits untrusted source to a configured Judge0 service; the browser never contacts Judge0 directly.
 
 ## Preview 
 
@@ -60,6 +61,22 @@ cd ../frontend
 npm install
 npm run dev
 ```
+
+The editor can be used without Judge0, but Run requests will finish with a provider-unavailable message. To enable execution, configure either a self-hosted Judge0 deployment:
+
+```env
+JUDGE0_BASE_URL=http://localhost:2358
+```
+
+or a hosted RapidAPI-compatible Judge0 endpoint:
+
+```env
+JUDGE0_BASE_URL=https://your-judge0-compatible-host
+JUDGE0_API_KEY=your-private-key
+JUDGE0_API_HOST=your-provider-host
+```
+
+These variables belong only on the Spring backend. Never add them to `VITE_*` variables. A full self-hosted Judge0 deployment includes its own workers, database, and queue; deploy it using the Judge0 project’s supported setup rather than adding it to this lightweight Compose file.
 
 The realtime service loads `realtime/.env` automatically when it starts. It uses `ioredis`, so Upstash must be configured with the TCP URL:
 
@@ -120,6 +137,110 @@ Yjs document edits flow only through the Node service. Spring handles STOMP even
 Supabase/PostgreSQL variables are not required by the current local runtime because file metadata and snapshots are held in backend memory for the lifetime of the process. Do not add Supabase credentials to `.env.example`; keep any production database credentials in the deployment provider's private environment settings.
 
 When the last user leaves a room, Spring marks it inactive and schedules cleanup after `ROOM_CLEANUP_GRACE_SECONDS` seconds. The realtime service also waits after the last Yjs websocket closes, flushes snapshots when `SNAPSHOT_ENDPOINT` is configured, removes in-memory Yjs docs for that room, and asks Spring to clean up only if no members reconnected.
+
+## Sandboxed Code Execution
+
+The Run toolbar captures the current Monaco model, which is the model bound to the active Yjs collaborative document. The user chooses one of the allowlisted languages, can supply standard input, and sees status, stdout, stderr, compiler output, runtime errors, exit code, and duration in the integrated console.
+
+```text
+Monaco/Yjs editor
+  -> Spring room execution API
+  -> execution service and policy checks
+  -> Judge0 provider adapter
+  -> isolated Judge0 worker
+  -> normalized execution result
+  -> requester-only API polling
+  -> integrated console
+```
+
+Execution results use requester-only HTTP polling instead of the existing room STOMP topics. Pear Programming’s current STOMP broker has shared room topics and no authenticated user destinations, so room broadcast would reveal private stdin/output to collaborators. Execution IDs and a frontend run sequence prevent an older result from replacing a newer run.
+
+### API
+
+Submit an execution:
+
+```http
+POST /api/rooms/{code}/executions
+X-Pear-Session-Id: <current browser session UUID>
+Idempotency-Key: <unique value for this Run click>
+Content-Type: application/json
+
+{
+  "language": "python",
+  "sourceCode": "print('hello')",
+  "stdin": ""
+}
+```
+
+The API responds with HTTP `202` and an execution ID in `QUEUED` or `SUBMITTED` state. Retrieve it with:
+
+```http
+GET /api/rooms/{code}/executions/{executionId}
+X-Pear-Session-Id: <same session UUID>
+```
+
+States are `QUEUED`, `SUBMITTED`, `RUNNING`, `COMPLETED`, `COMPILATION_ERROR`, `RUNTIME_ERROR`, `TIMED_OUT`, and `FAILED`. A terminal execution never transitions back to a running state.
+
+### Supported languages
+
+Judge0 IDs are centralized in `ExecutionLanguageRegistry`; clients submit language names, never provider IDs.
+
+- Java (`Main` class required)
+- Python
+- JavaScript / Node.js
+- C
+- C++
+
+### Backend environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `JUDGE0_BASE_URL` | `http://localhost:2358` | Self-hosted or compatible provider base URL |
+| `JUDGE0_API_KEY` | empty | Hosted provider key, sent as `X-RapidAPI-Key` |
+| `JUDGE0_API_HOST` | empty | Hosted provider host, sent as `X-RapidAPI-Host` |
+| `JUDGE0_REQUEST_TIMEOUT` | `5s` | Connect/read timeout per provider request |
+| `JUDGE0_EXECUTION_TIMEOUT_SECONDS` | `5` | Judge0 CPU-time limit |
+| `JUDGE0_EXECUTION_DEADLINE` | `20s` | End-to-end backend deadline |
+| `JUDGE0_POLL_INTERVAL` | `750ms` | Provider polling interval |
+| `JUDGE0_MAX_POLL_ATTEMPTS` | `25` | Hard polling bound |
+| `JUDGE0_MAX_RETRIES` | `2` | Retries for HTTP 429, 5xx, and transport errors |
+| `JUDGE0_RETRY_BACKOFF` | `200ms` | Initial bounded exponential backoff |
+| `EXECUTION_MAX_SOURCE_BYTES` | `100000` | UTF-8 source limit |
+| `EXECUTION_MAX_STDIN_BYTES` | `20000` | UTF-8 stdin limit |
+| `EXECUTION_RATE_LIMIT_PER_MINUTE` | `10` | Per-user, per-room submission limit |
+| `EXECUTION_RECORD_TTL` | `15m` | Result/idempotency retention |
+| `EXECUTION_WORKER_THREADS` | `4` | Bounded local polling worker count |
+
+### Security model and limitations
+
+- User code never executes in Spring, Node, the frontend, or the Pear Programming containers. Judge0 is the isolation boundary and must be independently secured, patched, resource-limited, and kept off unrestricted internal networks.
+- The server enforces language, source/stdin size, deadline, polling, retry, queue, rate, membership, ownership, and idempotency checks. Stored execution records do not contain source or stdin and expire automatically.
+- Provider credentials and raw provider failures never enter frontend contracts or room events. Console output is rendered as React text, not HTML.
+- The repository currently has no real authentication. `X-Pear-Session-Id` is the existing browser-generated room identity and can be spoofed by a malicious client. Active room membership is checked, but production-grade identity requires authenticated server-issued sessions before this should be treated as a strong authorization boundary.
+- Execution records and rate windows are process-local. This matches the current single-backend development/deployment model. A multi-instance deployment should move execution metadata/idempotency/rate state to Redis or a database and use a shared job queue.
+- Judge0 language IDs can differ across customized deployments. The included mapping targets standard Judge0 CE IDs for the five supported languages; update the centralized registry if the provider’s language catalog differs.
+
+### Testing execution
+
+Automated backend tests mock the execution provider and do not require a real Judge0 service:
+
+```bash
+cd backend
+mvn test
+```
+
+Frontend and realtime checks:
+
+```bash
+cd frontend
+npm run lint
+npm run build
+
+cd ../realtime
+npm run lint
+```
+
+The frontend currently has no JavaScript test runner; TypeScript checking and the production Vite build are the repository’s existing frontend verification conventions.
 
 ## Current Room UX
 
