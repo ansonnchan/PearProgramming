@@ -2,7 +2,7 @@
 
 Pear Programming is a browser-based collaborative code editor with sandboxed code execution. It uses a split real-time architecture:
 
-- Spring Boot owns server-issued guest sessions, rooms, chat, cursors, presence, room permissions, AI proxying, cleanup, and metrics.
+- Spring Boot owns server-issued guest sessions, PostgreSQL-backed users/workspaces/rooms/files, chat, cursors, presence, room permissions, AI proxying, cleanup, and metrics.
 - A separate Node `y-websocket` service owns Yjs CRDT document synchronization and optional Redis-backed update persistence.
 - React, Monaco, Yjs, SockJS/STOMP, and Tailwind power the browser app.
 - Spring submits untrusted source to a configured Judge0 service; the browser never contacts Judge0 directly.
@@ -43,13 +43,15 @@ frontend/  Vite + React + TypeScript + Monaco collaborative editor UI
 - Maven 3.9+
 - Node 20+
 - npm 10+
-- Docker Desktop, optional for Redis
+- Docker Desktop for the default local PostgreSQL and Redis setup
 
-## Quick Start Without Docker
+## Quick Start
 
-The default backend profile runs without Docker by falling back to in-memory room/file state when Redis is unavailable. PearAI returns a configuration error until `GROQ_API_KEY` is set, unless `PEARPROGRAM_AI_PLACEHOLDER=true` is enabled for local demos:
+Start PostgreSQL and Redis, then run the three application services. PostgreSQL is required; Redis remains an ephemeral collaboration accelerator and can fall back to process-local presence during development. PearAI returns a configuration error until `GROQ_API_KEY` is set, unless `PEARPROGRAM_AI_PLACEHOLDER=true` is enabled for local demos:
 
 ```powershell
+docker compose up -d postgres redis
+
 cd backend
 mvn spring-boot:run
 
@@ -92,23 +94,6 @@ PORT=1235
 
 Do not put `UPSTASH_REDIS_REST_URL` or `UPSTASH_REDIS_REST_TOKEN` into the realtime service unless the code is changed to use `@upstash/redis`. If no Redis TCP config is present, realtime starts with in-memory Yjs docs and logs that cross-instance persistence and live cross-instance Yjs fanout are unavailable.
 
-## Redis Mode
-
-```powershell
-docker compose up -d
-
-cd backend
-mvn spring-boot:run
-
-cd ../realtime
-npm install
-npm run dev
-
-cd ../frontend
-npm install
-npm run dev
-```
-
 Default local endpoints:
 
 - Frontend: `http://localhost:5174`
@@ -147,13 +132,47 @@ Production Redis should use TCP, not REST. The backend accepts either `SPRING_RE
 
 For Render, use `/healthz` as a lightweight backend health endpoint. It returns immediately and does not check Redis or other external services.
 
+## PostgreSQL persistence
+
+Flyway runs automatically before Hibernate validation. The durable schema contains:
+
+- `app_users` for server-issued guest identities and profiles.
+- `workspaces` and `workspace_members` for ownership and access.
+- `rooms` and `room_members` for room metadata and durable membership.
+- `workspace_files` for file content, ordering, and unique workspace-relative paths.
+- `file_snapshots` for the latest Yjs encoded state and plain-text recovery copy.
+- `ai_annotations` for active/dismissed inline annotations.
+
+Each room owns exactly one workspace. Joining the room adds both room and workspace membership. Redis no longer stores the durable room file tree; it remains responsible for active presence, lead/lock state, room-event fanout, and live Yjs updates. The Node realtime service periodically writes the latest Yjs snapshot through the authenticated internal API.
+
+Backend database variables:
+
+| Variable | Local default | Purpose |
+| --- | --- | --- |
+| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5432/pearprogram` | PostgreSQL JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | `pearprogram` | Database user |
+| `SPRING_DATASOURCE_PASSWORD` | `pearprogram` | Database password; use a secret in production |
+| `SPRING_DATASOURCE_MAX_POOL_SIZE` | `10` | Maximum Hikari connections |
+| `SPRING_DATASOURCE_MIN_IDLE` | `1` | Minimum idle connections |
+| `SPRING_DATASOURCE_CONNECTION_TIMEOUT_MS` | `10000` | Connection acquisition timeout |
+
+The previous prototype stored all users, workspaces, rooms, files, and snapshots in memory, so there is no durable pre-Phase-2 dataset to migrate. Existing browser session snapshots may reference obsolete workspace IDs and should be cleared once if they cannot reopen; no PostgreSQL rows are silently synthesized from client state.
+
+To inspect migration status or rerun startup against an existing database:
+
+```bash
+docker compose up -d postgres
+cd backend
+mvn spring-boot:run
+```
+
+Restarting the backend validates the existing Flyway history and Hibernate mappings without recreating data. Never edit an applied migration; add a new versioned migration instead.
+
 ## Architecture Notes
 
-Yjs document edits flow only through the Node service. Spring handles STOMP events for chat, cursors, permissions, file-tree sync events, and presence. Redis stores ephemeral room/session state with 24h TTL when configured; otherwise the backend falls back to in-memory room state for local development and logs that mode explicitly. In production, Redis also stores the current room file snapshot and fans out Spring room events and Yjs updates across service instances so two users in the same room do not split by backend instance.
+Yjs document edits flow only through the Node service. Spring handles STOMP events for chat, cursors, permissions, file-tree sync events, and presence. PostgreSQL is the durable source of truth. Redis stores ephemeral room/presence state with 24h TTL when configured and fans out Spring room events and Yjs updates across service instances; otherwise the backend logs its process-local collaboration fallback.
 
-Supabase/PostgreSQL variables are not required by the current local runtime because file metadata and snapshots are held in backend memory for the lifetime of the process. Do not add Supabase credentials to `.env.example`; keep any production database credentials in the deployment provider's private environment settings.
-
-When the last user leaves a room, Spring marks it inactive and schedules cleanup after `ROOM_CLEANUP_GRACE_SECONDS` seconds. The realtime service also waits after the last Yjs websocket closes, flushes snapshots when `SNAPSHOT_ENDPOINT` is configured, removes in-memory Yjs docs for that room, and asks Spring to clean up only if no members reconnected.
+When the last user leaves a room, Spring schedules ephemeral presence cleanup after `ROOM_CLEANUP_GRACE_SECONDS` seconds. The realtime service also waits after the last Yjs websocket closes, flushes snapshots when `SNAPSHOT_ENDPOINT` is configured, removes in-memory Yjs docs for that room, and asks Spring to clean up only if no members reconnected. Durable room/workspace/file rows remain available for reconnection; only an explicit room-close action cascades their deletion.
 
 ## Sandboxed Code Execution
 
@@ -260,7 +279,7 @@ cd ../realtime
 npm run lint
 ```
 
-The frontend currently has no JavaScript test runner; TypeScript checking and the production Vite build are the repository’s existing frontend verification conventions.
+The frontend currently has no JavaScript test runner; TypeScript checking and the production Vite build are the repository’s existing frontend verification conventions. Persistence integration tests use H2 in PostgreSQL compatibility mode so automated tests do not require public infrastructure; final local verification also applies Flyway to the Compose PostgreSQL service.
 
 ## Current Room UX
 
