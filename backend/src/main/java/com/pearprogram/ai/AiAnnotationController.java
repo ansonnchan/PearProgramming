@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.core.Authentication;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.ResponseStatus;
 
 import java.util.List;
 import java.util.UUID;
@@ -39,13 +41,15 @@ public class AiAnnotationController {
     @PostMapping("/api/rooms/{code}/annotations")
     public AiAnnotationDto create(@PathVariable String code, @Valid @RequestBody CreateAnnotationRequest request, Authentication authentication) {
         roomService.requireActiveMember(code, identities.requirePrincipal(authentication).id());
-        AiAnnotationDto annotation = annotationService.create(code, request);
+        AiAnnotationDto annotation = annotationService.create(
+                code, request, identities.requirePrincipal(authentication).userId());
         broadcastService.broadcast("/topic/room/" + code + "/annotations", annotation);
         return annotation;
     }
 
     @DeleteMapping("/api/annotations/{annotationId}")
-    public void dismiss(@PathVariable UUID annotationId) {
-        annotationService.dismiss(annotationId);
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void dismiss(@PathVariable UUID annotationId, Authentication authentication) {
+        annotationService.dismiss(annotationId, identities.requirePrincipal(authentication).userId());
     }
 }
