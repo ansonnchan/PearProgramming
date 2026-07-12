@@ -12,6 +12,7 @@ const PORT = numberFromEnv('PORT', 1235);
 const SNAPSHOT_ENDPOINT = process.env.SNAPSHOT_ENDPOINT || '';
 const ROOM_CLEANUP_ENDPOINT = process.env.ROOM_CLEANUP_ENDPOINT || deriveRoomCleanupEndpoint(SNAPSHOT_ENDPOINT);
 const AUTH_VALIDATION_ENDPOINT = process.env.AUTH_VALIDATION_ENDPOINT || 'http://localhost:8081/internal/auth/realtime/validate';
+const INTERNAL_SERVICE_TOKEN = process.env.INTERNAL_SERVICE_TOKEN || '';
 const SNAPSHOT_INTERVAL_MS = numberFromEnv('SNAPSHOT_INTERVAL_MS', 30_000);
 const ROOM_TTL_SECONDS = numberFromEnv('ROOM_TTL_SECONDS', 24 * 60 * 60);
 const ROOM_CLEANUP_GRACE_MS = numberFromEnv('ROOM_CLEANUP_GRACE_MS', 120_000);
@@ -200,7 +201,10 @@ async function validateRealtimeAccess(roomCode, accessToken) {
     const endpoint = new URL(AUTH_VALIDATION_ENDPOINT);
     endpoint.searchParams.set('token', accessToken);
     endpoint.searchParams.set('roomCode', roomCode);
-    const response = await fetch(endpoint, { signal: AbortSignal.timeout(3000) });
+    const response = await fetch(endpoint, {
+      headers: internalServiceHeaders(),
+      signal: AbortSignal.timeout(3000)
+    });
     if (!response.ok) {
       return null;
     }
@@ -227,6 +231,7 @@ async function hydratePostgresSnapshot(doc, roomCode, fileId) {
 
   try {
     const response = await fetch(`${SNAPSHOT_ENDPOINT}/${fileId}/snapshot`, {
+      headers: internalServiceHeaders(),
       signal: AbortSignal.timeout(2500)
     });
     if (!response.ok) {
@@ -418,7 +423,7 @@ async function flushSnapshot(docName, doc) {
   try {
     const response = await fetch(`${SNAPSHOT_ENDPOINT}/${fileId}/snapshot`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...internalServiceHeaders() },
       body: JSON.stringify({ roomCode, encodedState, plainText }),
       signal: AbortSignal.timeout(5000)
     });
@@ -527,6 +532,7 @@ async function notifyBackendRoomCleanup(roomCode) {
   try {
     const response = await fetch(`${ROOM_CLEANUP_ENDPOINT}/${encodeURIComponent(roomCode)}/cleanup`, {
       method: 'POST',
+      headers: internalServiceHeaders(),
       signal: AbortSignal.timeout(5000)
     });
 
@@ -536,6 +542,10 @@ async function notifyBackendRoomCleanup(roomCode) {
   } catch (error) {
     log('warn', 'Backend room cleanup request failed', { room: roomCode, error: error.message });
   }
+}
+
+function internalServiceHeaders() {
+  return INTERNAL_SERVICE_TOKEN ? { 'X-Pear-Internal-Token': INTERNAL_SERVICE_TOKEN } : {};
 }
 
 function redisKey(roomCode, fileId) {

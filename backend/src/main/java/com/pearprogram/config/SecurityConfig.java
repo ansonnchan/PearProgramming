@@ -11,6 +11,8 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.Map;
 
@@ -23,7 +25,8 @@ public class SecurityConfig {
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper,
-                                            SecurityContextRepository contextRepository) throws Exception {
+                                            SecurityContextRepository contextRepository,
+                                            @Value("${pearprogram.auth.internal-service-token:}") String internalServiceToken) throws Exception {
         CookieCsrfTokenRepository csrfRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepository.setCookiePath("/");
 
@@ -48,7 +51,8 @@ public class SecurityConfig {
                             "error", "authentication_required",
                             "message", "Sign in before accessing this resource"
                     ));
-                }));
+                }))
+                .addFilterBefore(new InternalServiceAuthenticationFilter(internalServiceToken), AuthorizationFilter.class);
         return http.build();
     }
 }

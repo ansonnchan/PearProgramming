@@ -44,6 +44,7 @@ pearprogram:
     placeholder-mode: ${PEARPROGRAM_AI_PLACEHOLDER:false}
   auth:
     realtime-token-ttl: ${AUTH_REALTIME_TOKEN_TTL:10m}
+    internal-service-token: ${INTERNAL_SERVICE_TOKEN:}
   execution:
     max-source-bytes: ${EXECUTION_MAX_SOURCE_BYTES:100000}
     max-stdin-bytes: ${EXECUTION_MAX_STDIN_BYTES:20000}
