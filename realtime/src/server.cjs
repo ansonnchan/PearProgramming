@@ -11,6 +11,7 @@ const loadedEnvFiles = loadEnvFiles();
 const PORT = numberFromEnv('PORT', 1235);
 const SNAPSHOT_ENDPOINT = process.env.SNAPSHOT_ENDPOINT || '';
 const ROOM_CLEANUP_ENDPOINT = process.env.ROOM_CLEANUP_ENDPOINT || deriveRoomCleanupEndpoint(SNAPSHOT_ENDPOINT);
+const AUTH_VALIDATION_ENDPOINT = process.env.AUTH_VALIDATION_ENDPOINT || 'http://localhost:8081/internal/auth/realtime/validate';
 const SNAPSHOT_INTERVAL_MS = numberFromEnv('SNAPSHOT_INTERVAL_MS', 30_000);
 const ROOM_TTL_SECONDS = numberFromEnv('ROOM_TTL_SECONDS', 24 * 60 * 60);
 const ROOM_CLEANUP_GRACE_MS = numberFromEnv('ROOM_CLEANUP_GRACE_MS', 120_000);
@@ -34,6 +35,7 @@ log('info', 'Realtime configuration loaded', {
   envFiles: loadedEnvFiles,
   snapshotEndpoint: sanitizeUrl(SNAPSHOT_ENDPOINT),
   roomCleanupEndpoint: sanitizeUrl(ROOM_CLEANUP_ENDPOINT),
+  authValidationEndpoint: sanitizeUrl(AUTH_VALIDATION_ENDPOINT),
   cleanupGraceMs: ROOM_CLEANUP_GRACE_MS,
   instanceId: INSTANCE_ID
 });
@@ -133,10 +135,17 @@ server.on('upgrade', async (req, socket, head) => {
     return;
   }
 
+  const authenticatedUser = await validateRealtimeAccess(parsed.roomCode, parsed.accessToken);
+  if (!authenticatedUser) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
   req.pearDocName = parsed.docName;
   req.pearRoomCode = parsed.roomCode;
   req.pearFileId = parsed.fileId;
-  req.pearUser = { valid: true, userId: 'anonymous', displayName: 'Guest' };
+  req.pearUser = authenticatedUser;
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit('connection', ws, req);
@@ -177,8 +186,33 @@ function parseDocRequest(req) {
   return {
     roomCode,
     fileId,
-    docName: `${roomCode}:${fileId}`
+    docName: `${roomCode}:${fileId}`,
+    accessToken: url.searchParams.get('access_token') || ''
   };
+}
+
+async function validateRealtimeAccess(roomCode, accessToken) {
+  if (!AUTH_VALIDATION_ENDPOINT || !accessToken) {
+    return null;
+  }
+
+  try {
+    const endpoint = new URL(AUTH_VALIDATION_ENDPOINT);
+    endpoint.searchParams.set('token', accessToken);
+    endpoint.searchParams.set('roomCode', roomCode);
+    const response = await fetch(endpoint, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) {
+      return null;
+    }
+    const validation = await response.json();
+    if (!validation.valid || !validation.userId) {
+      return null;
+    }
+    return { valid: true, userId: validation.userId };
+  } catch (error) {
+    log('warn', 'Realtime authentication validation failed', { room: roomCode, error: error.message });
+    return null;
+  }
 }
 
 async function hydrateDoc(doc, roomCode, fileId) {
