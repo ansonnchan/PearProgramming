@@ -48,6 +48,7 @@ class RoomFlowTests {
         mockMvc.perform(get("/api/rooms/{code}", code).session(creatorSession))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code", equalTo(code)))
+                .andExpect(jsonPath("$.workspaceId", notNullValue()))
                 .andExpect(jsonPath("$.leadUserId", equalTo(creatorId)))
                 .andExpect(jsonPath("$.memberCount", equalTo(1)));
 

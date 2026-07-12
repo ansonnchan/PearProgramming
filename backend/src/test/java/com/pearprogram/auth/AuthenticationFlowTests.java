@@ -30,12 +30,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AuthenticationFlowTests {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private UserRepository users;
 
     @Test
     void createsAndRestoresServerIssuedIdentity() throws Exception {
         SignIn signIn = signIn("Alice", "attacker-controlled-id");
 
         assertThat(signIn.userId()).isNotEqualTo("attacker-controlled-id");
+        assertThat(users.findById(java.util.UUID.fromString(signIn.userId())).orElseThrow().getDisplayName())
+                .isEqualTo("Alice");
         mockMvc.perform(get("/api/auth/session").session(signIn.session()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").value(signIn.userId()))
@@ -64,6 +67,8 @@ class AuthenticationFlowTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").value(signIn.userId()))
                 .andExpect(jsonPath("$.displayName").value("Alice Updated"));
+        assertThat(users.findById(java.util.UUID.fromString(signIn.userId())).orElseThrow().getDisplayName())
+                .isEqualTo("Alice Updated");
 
         mockMvc.perform(post("/api/auth/logout").session(signIn.session()).with(csrf()))
                 .andExpect(status().isNoContent());
