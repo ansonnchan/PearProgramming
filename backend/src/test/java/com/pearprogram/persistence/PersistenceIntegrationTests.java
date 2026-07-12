@@ -108,13 +108,14 @@ class PersistenceIntegrationTests {
     void batchCreationRollsBackWhenAnyFileIsInvalid() {
         UUID owner = createUser("Rollback Owner");
         UUID workspaceId = workspaces.createWorkspace("Rollback", owner.toString()).id();
+        var original = files.createFile(workspaceId, new CreateFileRequest("original.txt", "plaintext", "keep"));
 
         assertThatThrownBy(() -> files.createFiles(workspaceId, new BatchCreateFilesRequest(List.of(
                 new CreateFileRequest("valid.txt", "plaintext", "valid"),
                 new CreateFileRequest("../invalid.txt", "plaintext", "invalid")
-        ), false))).isInstanceOf(ResponseStatusException.class);
+        ), true))).isInstanceOf(ResponseStatusException.class);
 
-        assertThat(files.listFiles(workspaceId)).isEmpty();
+        assertThat(files.listFiles(workspaceId)).extracting("id").containsExactly(original.id());
     }
 
     @Test

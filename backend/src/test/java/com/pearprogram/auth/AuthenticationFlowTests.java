@@ -107,9 +107,18 @@ class AuthenticationFlowTests {
                         .content("{\"name\":\"secure-workspace\"}"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString());
+        JsonNode file = json(mockMvc.perform(post("/api/workspaces/{id}/files", workspace.path("id").asText())
+                        .session(owner.session())
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"path\":\"private.txt\",\"content\":\"secret\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
 
         SignIn outsider = signIn("Outsider", null);
         mockMvc.perform(get("/api/workspaces/{id}", workspace.path("id").asText()).session(outsider.session()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/files/{id}", file.path("id").asText()).session(outsider.session()))
                 .andExpect(status().isForbidden());
     }
 
