@@ -14,6 +14,7 @@ export type AuthSession = {
 
 export type Room = {
   code: string;
+  workspaceId: string;
   active: boolean;
   createdAt: string;
   memberCount: number;
@@ -50,6 +51,7 @@ export type BootstrapResponse = {
 
 export type RoomCreateResponse = {
   code: string;
+  workspaceId: string;
   joinUrl: string;
   createdAt: string;
   memberCount: number;

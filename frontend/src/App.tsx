@@ -32,7 +32,6 @@ import {
   ApiError,
   createFile,
   createRoom,
-  createWorkspace,
   dismissAnnotation,
   getExecution,
   getRoom,
@@ -70,6 +69,7 @@ const REALTIME_WAKE_URL = 'https://pear-program-realtime.onrender.com/health';
 
 const FALLBACK_ROOM: Room = {
   code: 'LOCAL1',
+  workspaceId: '00000000-0000-0000-0000-000000000000',
   active: true,
   createdAt: new Date().toISOString(),
   memberCount: 1,
@@ -1993,9 +1993,13 @@ export default function App() {
       return;
     }
 
+    const currentRoom = roomRef.current;
+    if (!currentRoom) {
+      setCreateItemError('Join a room before creating files.');
+      return;
+    }
     try {
-      const workspace = await createWorkspace(`${roomRef.current?.code ?? 'workspace'}-${resolvedPath}`);
-      const workspaceId = workspace.id;
+      const workspaceId = currentRoom.workspaceId;
       if (currentKind === 'file') {
         const local = await createWorkspaceFile(workspaceId, resolvedPath, '', user.id);
         const nextFiles = applyUploadedFiles([local], false, true);
@@ -2118,15 +2122,7 @@ export default function App() {
     }
 
     setSaveState('saving');
-    let workspace;
-    try {
-      workspace = await createWorkspace(projectNameForPaths(candidates.map((candidate) => candidate.path)));
-    } catch {
-      setUploadNotice('Upload requires an active authenticated session. Sign in again and retry.');
-      setSaveState('error');
-      return [];
-    }
-    const workspaceId = workspace.id;
+    const workspaceId = currentRoom.workspaceId;
     try {
       const persisted = await uploadWorkspaceFiles(workspaceId, candidates, replaceExisting);
       const uploaded = persisted.length > 0
