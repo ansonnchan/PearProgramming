@@ -1,10 +1,8 @@
 import Editor, { type OnMount } from '@monaco-editor/react';
-import { Client, type IMessage } from '@stomp/stompjs';
+import { Client } from '@stomp/stompjs';
 import {
   Bot,
   Check,
-  ChevronDown,
-  ChevronRight,
   Copy,
   Download,
   FilePlus2,
@@ -13,9 +11,7 @@ import {
   ImagePlus,
   MessageSquare,
   Play,
-  Send,
   SquareTerminal,
-  Trash2,
   Upload,
   UserRound,
   Wifi,
@@ -23,9 +19,7 @@ import {
   X
 } from 'lucide-react';
 import { type DragEvent, type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
-import SockJS from 'sockjs-client';
 import * as Y from 'yjs';
-import { MonacoBinding } from 'y-monaco';
 import { WebsocketProvider } from 'y-websocket';
 import {
   API_BASE_URL,
@@ -33,32 +27,30 @@ import {
   createFile,
   createRoom,
   dismissAnnotation,
-  getExecution,
   getRoom,
   getRoomFiles,
   getRoomAccess,
-  getStompConnectHeaders,
   joinRoom as apiJoinRoom,
   listAnnotations,
   listChatHistory,
-  logoutAuthSession,
-  restoreAuthSession,
-  signInGuest,
-  STOMP_URL,
   saveRoomFiles,
-  submitExecution,
-  updateAuthProfile,
   updateFileContent,
   uploadWorkspaceFiles,
   YJS_URL
 } from './api';
 import { EXECUTION_LANGUAGES, executionLanguageForEditorLanguage, inferLanguage, languageClass, type ExecutionLanguage } from './language';
-import { executionStatusLabel, frontendTimeoutResult, isTerminalExecution } from './execution/state';
+import { useExecution } from './execution/useExecution';
+import { ExecutionConsole } from './components/execution/ExecutionConsole';
+import { useAuthSession } from './auth/useAuthSession';
+import { useRoomConnection } from './collaboration/useRoomConnection';
+import { useCollaborativeDocument } from './collaboration/useCollaborativeDocument';
+import { FileTree } from './components/file-tree/FileTree';
+import { ChatPanel, type DisplayChatMessage, type MentionOption } from './components/chat/ChatPanel';
 import pearLogoUrl from '../assets/favicon.png';
 import pearChibiUrl from '../assets/pear_chibi.jpg';
 import type { UploadCandidate, UploadReadResult } from './uploads';
 import { projectNameForPaths, readDroppedUploadCandidates, readUploadCandidates, UPLOAD_ACCEPT } from './uploads';
-import type { AiAnnotation, AuthSession, ChatMessage, CursorMessage, ExecutionResult, Member, ProjectSwitchEvent, Room, RoomSessionState, WorkspaceFile } from './types';
+import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, RoomSessionState, WorkspaceFile } from './types';
 
 const DEFAULT_COLOR = '#000000';
 const ROOM_SESSION_STORAGE_KEY = 'pearprogram-room-session';
@@ -78,19 +70,6 @@ const FALLBACK_ROOM: Room = {
   leadUserId: null
 };
 
-type TreeNode = {
-  name: string;
-  path: string;
-  children: TreeNode[];
-  file?: WorkspaceFile;
-};
-
-type MutableTreeNode = {
-  name: string;
-  path: string;
-  children: Map<string, MutableTreeNode>;
-  file?: WorkspaceFile;
-};
 
 type PendingSwitch = {
   proposalId: string;
@@ -117,19 +96,10 @@ type MemberRealtimeEvent = {
   at?: string;
 };
 
-type DisplayChatMessage = ChatMessage & { system?: boolean };
-
 type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
 
 type PendingRoomAction = 'create' | 'join';
 
-type MentionOption = {
-  id: string;
-  name: string;
-  label: string;
-  color: string;
-  ai?: boolean;
-};
 
 export default function App() {
   const [room, setRoom] = useState<Room | null>(null);
@@ -140,10 +110,6 @@ export default function App() {
   const [annotations, setAnnotations] = useState<AiAnnotation[]>([]);
   const [cursors, setCursors] = useState<Record<string, CursorMessage>>({});
   const [presenceMembers, setPresenceMembers] = useState<Record<string, Member>>({});
-  const [stompClient, setStompClient] = useState<Client | null>(null);
-  const [stompConnected, setStompConnected] = useState(false);
-  const [syncStatus, setSyncStatus] = useState('Yjs offline');
-  const [peerCount, setPeerCount] = useState(1);
   const [chatDraft, setChatDraft] = useState('');
   const [chatError, setChatError] = useState('');
   const [mentionState, setMentionState] = useState({ open: false, query: '', start: 0, end: 0 });
@@ -181,16 +147,11 @@ export default function App() {
   const [createItemKind, setCreateItemKind] = useState<'file' | 'folder' | null>(null);
   const [createItemName, setCreateItemName] = useState('');
   const [createItemError, setCreateItemError] = useState('');
-  const [user, setUser] = useState<Member>({ id: '', name: 'You', color: DEFAULT_COLOR });
-  const [authReady, setAuthReady] = useState(false);
-  const [realtimeToken, setRealtimeToken] = useState('');
+  const { ready: authReady, realtimeToken, signIn, signOut, updateProfile, user, userRef } = useAuthSession();
   const [connectionId] = useState(() => getOrCreateConnectionId());
   const [editorMountVersion, setEditorMountVersion] = useState(0);
   const [executionLanguage, setExecutionLanguage] = useState<ExecutionLanguage>('javascript');
   const [executionStdin, setExecutionStdin] = useState('');
-  const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
-  const [executionError, setExecutionError] = useState('');
-  const [executionSubmitting, setExecutionSubmitting] = useState(false);
   const [executionPanelOpen, setExecutionPanelOpen] = useState(true);
 
   const openFiles = openFileIds
@@ -213,9 +174,6 @@ export default function App() {
 
   const editorRef = useRef<unknown>(null);
   const monacoRef = useRef<any>(null);
-  const bindingRef = useRef<MonacoBinding | null>(null);
-  const providerRef = useRef<WebsocketProvider | null>(null);
-  const ydocRef = useRef<Y.Doc | null>(null);
   const cursorWidgetsRef = useRef<Map<string, any>>(new Map());
   const annotationWidgetsRef = useRef<Map<string, any>>(new Map());
   const cursorSentAtRef = useRef(0);
@@ -229,13 +187,10 @@ export default function App() {
   const openFileIdsRef = useRef<string[]>([]);
   const activeFileIdRef = useRef<string | null>(null);
   const activeFileRef = useRef<WorkspaceFile | null>(null);
-  const stompRef = useRef<Client | null>(null);
-  const userRef = useRef<Member>(user);
   const mentionOptionsRef = useRef<MentionOption[]>([]);
   const leadUserIdRef = useRef<string | null>(null);
   const roomLockedRef = useRef(false);
   const toastTimerRef = useRef<number | null>(null);
-  const heartbeatTimerRef = useRef<number | null>(null);
   const contentSyncTimerRef = useRef<number | null>(null);
   const pendingContentSyncRef = useRef<{ fileId: string; content: string; updatedAt: string } | null>(null);
   const lastLocalEditAtRef = useRef(0);
@@ -246,41 +201,13 @@ export default function App() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const entryAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const bootstrappedRoomRef = useRef(false);
-  const executionSequenceRef = useRef(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    restoreAuthSession()
-      .then((session) => {
-        if (cancelled || !session) {
-          return;
-        }
-        applyAuthenticatedSession(session);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) {
-          setAuthReady(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!authReady || !user.id) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void restoreAuthSession().then((session) => {
-        if (session) {
-          applyAuthenticatedSession(session);
-        }
-      }).catch(() => undefined);
-    }, 8 * 60_000);
-    return () => window.clearInterval(timer);
-  }, [authReady, user.id]);
+  const {
+    clear: clearExecutionConsole,
+    error: executionError,
+    result: executionResult,
+    run: submitActiveExecution,
+    submitting: executionSubmitting
+  } = useExecution(activeFile?.id ?? null);
 
   const handleJoinRoom = useCallback(async (rawCode: string, displayName?: string, replaceUrl = true) => {
     const code = normalizeRoomCode(rawCode);
@@ -442,13 +369,6 @@ export default function App() {
   }, [activeFile?.id, activeFile?.language]);
 
   useEffect(() => {
-    executionSequenceRef.current += 1;
-    setExecutionResult(null);
-    setExecutionError('');
-    setExecutionSubmitting(false);
-  }, [activeFile?.id]);
-
-  useEffect(() => {
     activeFileIdRef.current = activeFileId;
   }, [activeFileId]);
 
@@ -457,16 +377,8 @@ export default function App() {
   }, [openFileIds]);
 
   useEffect(() => {
-    userRef.current = user;
-  }, [user]);
-
-  useEffect(() => {
     mentionOptionsRef.current = mentionOptions;
   }, [mentionOptions]);
-
-  useEffect(() => {
-    stompRef.current = stompClient;
-  }, [stompClient]);
 
   useEffect(() => {
     leadUserIdRef.current = leadUserId;
@@ -585,259 +497,65 @@ export default function App() {
     filesRef.current = files;
   }, [files]);
 
-  useEffect(() => {
-    if (!room) {
-      return;
+  const { client: stompClient, clientRef: stompRef, connected: stompConnected } = useRoomConnection(room?.code ?? null, {
+    onChat: (message) => {
+      const chatMessage = JSON.parse(message.body) as ChatMessage;
+      const activeUser = userRef.current;
+      if (chatMessage.userId !== activeUser.id && messageMentionsUser(chatMessage.content, activeUser, mentionOptionsRef.current)) {
+        showToast(`${displayNameOrPear(chatMessage.displayName)} mentioned you`);
+      }
+      setMessages((current) => [...current, chatMessage].slice(-60));
+    },
+    onCursor: (message) => {
+      const cursor = JSON.parse(message.body) as CursorMessage;
+      if (cursor.userId !== userRef.current.id) {
+        setCursors((current) => ({ ...current, [cursor.userId]: cursor }));
+      }
+    },
+    onMember: (message, client) => handleMemberEvent(JSON.parse(message.body) as MemberRealtimeEvent, client),
+    onAnnotation: (message) => {
+      const annotation = JSON.parse(message.body) as AiAnnotation;
+      setAnnotations((current) => upsertAnnotation(current, annotation).slice(-5));
+    },
+    onProjectSwitch: (message) => handleProjectSwitchEvent(JSON.parse(message.body) as ProjectSwitchEvent),
+    onConnected: (client) => {
+      const currentUser = userRef.current;
+      client.publish({
+        destination: `/app/room/${room!.code}/members`,
+        body: JSON.stringify({
+          type: 'joined', userId: currentUser.id, sessionId: currentUser.id, connectionId,
+          displayName: currentUser.name, color: currentUser.color, avatarUrl: currentUser.avatarUrl,
+          leadUserId: leadUserIdRef.current, locked: roomLockedRef.current, at: new Date().toISOString()
+        })
+      });
+      flushPendingUploadSyncs(client);
+    },
+    onHeartbeat: (client) => {
+      const currentUser = userRef.current;
+      client.publish({
+        destination: `/app/room/${room!.code}/members`,
+        body: JSON.stringify({
+          type: 'presence-sync', userId: currentUser.id, sessionId: currentUser.id, connectionId,
+          displayName: currentUser.name, color: currentUser.color, avatarUrl: currentUser.avatarUrl,
+          leadUserId: leadUserIdRef.current, locked: roomLockedRef.current, targetUserId: currentUser.id,
+          at: new Date().toISOString()
+        })
+      });
     }
+  });
 
-    const client = new Client({
-      connectHeaders: getStompConnectHeaders(),
-      reconnectDelay: 2000,
-      webSocketFactory: () => new SockJS(STOMP_URL),
-      onConnect: () => {
-        const currentUser = userRef.current;
-        setStompConnected(true);
-        client.subscribe(`/topic/room/${room.code}/chat`, (message: IMessage) => {
-          const chatMessage = JSON.parse(message.body) as ChatMessage;
-          const activeUser = userRef.current;
-          if (chatMessage.userId !== activeUser.id && messageMentionsUser(chatMessage.content, activeUser, mentionOptionsRef.current)) {
-            showToast(`${displayNameOrPear(chatMessage.displayName)} mentioned you`);
-          }
-          setMessages((current) => [...current, chatMessage].slice(-60));
-        });
-        client.subscribe(`/topic/room/${room.code}/cursors`, (message: IMessage) => {
-          const cursor = JSON.parse(message.body) as CursorMessage;
-          if (cursor.userId === user.id) {
-            return;
-          }
-          setCursors((current) => ({ ...current, [cursor.userId]: cursor }));
-        });
-        client.subscribe(`/topic/room/${room.code}/members`, (message: IMessage) => {
-          handleMemberEvent(JSON.parse(message.body) as MemberRealtimeEvent, client);
-        });
-        client.subscribe(`/topic/room/${room.code}/annotations`, (message: IMessage) => {
-          const annotation = JSON.parse(message.body) as AiAnnotation;
-          setAnnotations((current) => upsertAnnotation(current, annotation).slice(-5));
-        });
-        client.subscribe(`/topic/room/${room.code}/project-switch`, (message: IMessage) => {
-          handleProjectSwitchEvent(JSON.parse(message.body) as ProjectSwitchEvent);
-        });
-        client.publish({
-          destination: `/app/room/${room.code}/members`,
-          body: JSON.stringify({
-            type: 'joined',
-            userId: currentUser.id,
-            sessionId: currentUser.id,
-            connectionId,
-            displayName: currentUser.name,
-            color: currentUser.color,
-            avatarUrl: currentUser.avatarUrl,
-            leadUserId: leadUserIdRef.current,
-            locked: roomLockedRef.current,
-            at: new Date().toISOString()
-          })
-        });
-        if (heartbeatTimerRef.current) {
-          window.clearInterval(heartbeatTimerRef.current);
-        }
-        heartbeatTimerRef.current = window.setInterval(() => {
-          if (!client.connected) {
-            return;
-          }
-
-          client.publish({
-            destination: `/app/room/${room.code}/members`,
-            body: JSON.stringify({
-              type: 'presence-sync',
-              userId: userRef.current.id,
-              sessionId: userRef.current.id,
-              connectionId,
-              displayName: userRef.current.name,
-              color: userRef.current.color,
-              avatarUrl: userRef.current.avatarUrl,
-              leadUserId: leadUserIdRef.current,
-              locked: roomLockedRef.current,
-              targetUserId: userRef.current.id,
-              at: new Date().toISOString()
-            })
-          });
-        }, 25_000);
-        flushPendingUploadSyncs(client);
-      },
-      onWebSocketClose: () => setStompConnected(false),
-      onStompError: () => setStompConnected(false)
-    });
-
-    client.activate();
-    setStompClient(client);
-
-    return () => {
-      if (heartbeatTimerRef.current) {
-        window.clearInterval(heartbeatTimerRef.current);
-        heartbeatTimerRef.current = null;
-      }
-      void client.deactivate();
-      setStompConnected(false);
-      setStompClient(null);
-    };
-  }, [connectionId, room]);
-
-  useEffect(() => {
-    const editor = editorRef.current as any;
-    const currentRoom = roomRef.current;
-    const currentFile = activeFileRef.current;
-    if (!editor || !currentRoom || !currentFile) {
-      return;
-    }
-
-    bindingRef.current?.destroy();
-    providerRef.current?.destroy();
-    ydocRef.current?.destroy();
-    bindingRef.current = null;
-    providerRef.current = null;
-    ydocRef.current = null;
-
-    const model = editor.getModel();
-    if (!model) {
-      return;
-    }
-
-    let disposed = false;
-    const suppressionTimers: number[] = [];
-    const releaseSuppressionSoon = () => {
-      const timer = window.setTimeout(() => {
-        if (!disposed) {
-          suppressEditorChangeRef.current = false;
-        }
-      }, 0);
-      suppressionTimers.push(timer);
-    };
-    const setModelContent = (content: string) => {
-      suppressEditorChangeRef.current = true;
-      if (model.getValue() !== content) {
-        model.setValue(content);
-      }
-      releaseSuppressionSoon();
-    };
-
-    setModelContent(currentFile.content);
-
-    if (!YJS_URL) {
-      setSyncStatus('Yjs offline');
-      setPeerCount(1);
-      return () => {
-        disposed = true;
-        suppressionTimers.forEach((timer) => window.clearTimeout(timer));
-        suppressEditorChangeRef.current = false;
-      };
-    }
-
-    const ydoc = new Y.Doc();
-    if (!realtimeToken) {
-      setSyncStatus('Authentication required');
-      return;
-    }
-    const provider = new WebsocketProvider(YJS_URL, `${currentRoom.code}/${currentFile.id}`, ydoc, {
-      params: { access_token: realtimeToken }
-    });
-    const yText = ydoc.getText('monaco');
-    const yMeta = ydoc.getMap('meta');
-
-    const shouldSeedLocalText = currentRoom.code === FALLBACK_ROOM.code || !isUuid(currentFile.id);
-    if (shouldSeedLocalText && !yMeta.get('initialized')) {
-      ydoc.transact(() => {
-        if (yText.length === 0 && currentFile.content) {
-          yText.insert(0, currentFile.content);
-        }
-        yMeta.set('initialized', true);
-      }, 'pear-local-seed');
-    }
-
-    let binding: MonacoBinding | null = null;
-    const syncFileStateFromModel = () => {
-      const content = model.getValue();
-      const current = filesRef.current.find((file) => file.id === currentFile.id);
-      if (!current || current.content === content) {
-        return;
-      }
-      const updatedAt = new Date().toISOString();
-      filesRef.current = filesRef.current.map((file) => (
-        file.id === currentFile.id ? { ...file, content, updatedAt } : file
-      ));
-      setFiles((items) => items.map((file) => (
-        file.id === currentFile.id ? { ...file, content, updatedAt } : file
-      )));
-    };
-    const seedSyncedTextIfNeeded = () => {
-      if (yMeta.get('initialized')) {
-        return;
-      }
-      const seedContent = model.getValue();
-      ydoc.transact(() => {
-        if (yText.length === 0 && seedContent) {
-          yText.insert(0, seedContent);
-        }
-        yMeta.set('initialized', true);
-      }, 'pear-synced-seed');
-    };
-    const attachBinding = () => {
-      if (disposed || binding) {
-        return;
-      }
-      seedSyncedTextIfNeeded();
-      suppressEditorChangeRef.current = true;
-      binding = new MonacoBinding(yText, model, new Set([editor]), provider.awareness);
-      bindingRef.current = binding;
-      syncFileStateFromModel();
-      releaseSuppressionSoon();
-      setSyncStatus('Yjs synced');
-    };
-
-    provider.awareness.setLocalStateField('user', { name: user.name, color: user.color, avatarUrl: user.avatarUrl });
-    const handleStatus = ({ status }: { status: string }) => {
-      setSyncStatus(status === 'connected' ? (binding ? 'Yjs synced' : 'Yjs syncing') : 'Yjs reconnecting');
-    };
-    provider.on('status', handleStatus);
-    const handleSync = (synced: boolean) => {
-      if (!synced) {
-        return;
-      }
-      attachBinding();
-    };
-    provider.on('sync', handleSync);
-    const updatePeerCount = () => setPeerCount(provider.awareness.getStates().size);
-    provider.awareness.on('change', updatePeerCount);
-
-    providerRef.current = provider;
-    ydocRef.current = ydoc;
-    setSyncStatus('Yjs connecting');
-    updatePeerCount();
-
-    if ((provider as unknown as { synced?: boolean }).synced) {
-      attachBinding();
-    }
-
-    return () => {
-      disposed = true;
-      suppressionTimers.forEach((timer) => window.clearTimeout(timer));
-      suppressEditorChangeRef.current = false;
-      provider.off('status', handleStatus);
-      provider.off('sync', handleSync);
-      provider.awareness.off('change', updatePeerCount);
-      binding?.destroy();
-      provider.destroy();
-      ydoc.destroy();
-      if (bindingRef.current === binding) {
-        bindingRef.current = null;
-      }
-      if (providerRef.current === provider) {
-        providerRef.current = null;
-      }
-      if (ydocRef.current === ydoc) {
-        ydocRef.current = null;
-      }
-    };
-  }, [activeFile?.id, editorMountVersion, realtimeToken, room?.code, user.avatarUrl, user.color, user.id, user.name]);
+  const { peerCount, syncStatus } = useCollaborativeDocument({
+    editor: editorRef,
+    editorMountVersion,
+    file: activeFile,
+    filesRef,
+    onFilesChange: setFiles,
+    realtimeToken,
+    roomCode: room?.code ?? null,
+    suppressEditorChange: suppressEditorChangeRef,
+    user,
+    yjsUrl: YJS_URL
+  });
 
   useEffect(() => {
     const editor = editorRef.current as any;
@@ -956,7 +674,6 @@ export default function App() {
     );
   }
 
-  const tree = buildTree(files);
   const hasApproved = pendingSwitch?.approvedUserIds.includes(user.id) ?? false;
   const workspaceClass = [
     'workspace-grid',
@@ -1085,21 +802,8 @@ export default function App() {
               </button>
             </div>
           )}
-          <div className="tree">
-            {tree.length > 0 ? tree.map((node) => (
-              <TreeRow
-                activeFileId={activeFile?.id ?? ''}
-                expandedFolders={expandedFolders}
-                key={node.path}
-                node={node}
-                onDeletePath={deleteTreePath}
-                onFileSelect={openFileTab}
-                onToggleFolder={toggleFolder}
-              />
-            )) : (
-              <div className="empty-tree">No files yet</div>
-            )}
-          </div>
+          <div className="tree"><FileTree activeFileId={activeFile?.id ?? ''} expandedFolders={expandedFolders} files={files}
+            onDeletePath={deleteTreePath} onFileSelect={openFileTab} onToggleFolder={toggleFolder} /></div>
         </aside>
         ) : (
           <aside className="explorer-rail">
@@ -1201,84 +905,27 @@ export default function App() {
         </section>
 
         {chatOpen ? (
-          <aside className="chat">
-            <div className="pane-title-row chat-title-row">
-              <span className="pane-title">Room chat</span>
-              <div className="chat-title-tools">
-                <span className="shared-label">{formatPacificTime(pacificNow.toISOString())}</span>
-                <button className="icon-button panel-minimize-button" onClick={() => setChatOpen(false)} title="Minimize chat" type="button">
-                  -
-                </button>
-              </div>
-            </div>
-            <div className="messages">
-              {messages.map((message) => (
-                <article className={`message ${message.ai ? 'message-ai' : ''} ${message.system ? 'message-system' : ''} ${messageMentionsUser(message.content, user, mentionOptions) ? 'message-mentioned' : ''}`} key={message.id}>
-                  {message.system ? (
-                    <p>{message.content}</p>
-                  ) : (
-                    <>
-                      <div className="message-meta">
-                        <span>{message.displayName}</span>
-                        <span>{formatPacificTime(message.createdAt)}</span>
-                      </div>
-                      <p>{renderMessageContent(message.content, mentionOptions, insertMentionIntoDraft)}</p>
-                    </>
-                  )}
-                </article>
-              ))}
-            </div>
-            <div className="chat-input-shell">
-              {filteredMentionOptions.length > 0 && (
-                <div className="mention-menu" role="listbox">
-                  {filteredMentionOptions.map((option, index) => (
-                    <button
-                      aria-selected={index === mentionActiveIndex}
-                      className={`mention-option ${index === mentionActiveIndex ? 'mention-option-active' : ''}`}
-                      key={option.id}
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        insertMentionIntoDraft(option);
-                      }}
-                      role="option"
-                      type="button"
-                    >
-                      <span className={`mention-avatar ${option.ai ? 'mention-avatar-ai' : ''}`} style={{ backgroundColor: `${option.color}22`, color: option.color }}>
-                        {option.ai ? <Bot size={12} /> : initials(option.name)}
-                      </span>
-                      <span>@{option.label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {chatError && <p className="chat-error">{chatError}</p>}
-            <div className="chat-input">
-              <input
-                onChange={(event) => {
-                  setChatDraft(event.target.value);
-                  setChatError('');
-                  updateMentionState(event.currentTarget);
-                }}
-                onKeyDown={(event) => {
-                  if (handleMentionKeyDown(event)) {
-                    return;
-                  }
-                  if (event.key === 'Enter') {
-                    sendChat();
-                  }
-                }}
-                onClick={(event) => updateMentionState(event.currentTarget)}
-                onKeyUp={(event) => updateMentionState(event.currentTarget)}
-                placeholder="Message or @AI..."
-                ref={chatInputRef}
-                value={chatDraft}
-              />
-              <button className="send-button" onClick={sendChat} title="Send message" type="button">
-                <Send size={16} />
-              </button>
-            </div>
-            </div>
-          </aside>
+          <ChatPanel
+            activeMentionIndex={mentionActiveIndex}
+            draft={chatDraft}
+            error={chatError}
+            inputRef={chatInputRef}
+            mentionOptions={filteredMentionOptions}
+            messages={messages}
+            nowLabel={formatPacificTime(pacificNow.toISOString())}
+            onClose={() => setChatOpen(false)}
+            onDraftInput={(input) => {
+              setChatDraft(input.value);
+              setChatError('');
+              updateMentionState(input);
+            }}
+            onInsertMention={insertMentionIntoDraft}
+            onMentionKeyDown={handleMentionKeyDown}
+            onSend={sendChat}
+            renderContent={(message) => renderMessageContent(message.content, mentionOptions, insertMentionIntoDraft)}
+            user={user}
+            messageMentionsUser={(message) => messageMentionsUser(message.content, user, mentionOptions)}
+          />
         ) : (
           <aside className="chat-rail">
             <button className="chat-rail-button" onClick={() => setChatOpen(true)} title="Show chat" type="button">
@@ -1451,14 +1098,12 @@ export default function App() {
     }
 
     const action = pendingRoomAction;
-    let session: AuthSession;
     try {
-      session = await signInGuest(displayName, entryProfileAvatar);
+      await signIn(displayName, entryProfileAvatar);
     } catch {
       setEntryProfileError('Could not create a secure session. Try again.');
       return;
     }
-    applyAuthenticatedSession(session);
     setEntryProfileOpen(false);
     setPendingRoomAction(null);
     setEntryProfileError('');
@@ -1474,7 +1119,6 @@ export default function App() {
   }
 
   function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean, restoredState?: RoomSessionState) {
-    executionSequenceRef.current += 1;
     const sortedFiles = nextFiles.sort(sortByPath);
     const restoredOpenFileIds = restoredState?.openFileIds ?? [];
     const nextOpenFileIds = restoredOpenFileIds.filter((fileId) => sortedFiles.some((file) => file.id === fileId));
@@ -1508,9 +1152,7 @@ export default function App() {
     setCursorPosition(restoredState?.cursorPosition ?? { line: 1, col: 1 });
     setSaveState(sortedFiles.length > 0 ? 'saved' : 'idle');
     setLastSavedAt(null);
-    setExecutionResult(null);
-    setExecutionError('');
-    setExecutionSubmitting(false);
+    clearExecutionConsole();
     if (replaceUrl) {
       window.history.replaceState(null, '', `/join/${nextRoom.code}`);
     }
@@ -1580,69 +1222,13 @@ export default function App() {
 
     const editor = editorRef.current as { getValue?: () => string } | null;
     const sourceCode = editor?.getValue?.() ?? currentFile.content;
-    const sequence = executionSequenceRef.current + 1;
-    executionSequenceRef.current = sequence;
-    setExecutionSubmitting(true);
     setExecutionPanelOpen(true);
-    setExecutionError('');
-    setExecutionResult(null);
-
-    try {
-      let current = await submitExecution(currentRoom.code, crypto.randomUUID(), {
-        language: executionLanguage,
-        sourceCode,
-        stdin: executionStdin
-      });
-      if (executionSequenceRef.current !== sequence) {
-        return;
-      }
-      setExecutionResult(current);
-      setExecutionSubmitting(false);
-
-      const pollingDeadline = Date.now() + 35_000;
-      let consecutiveFailures = 0;
-      while (!isTerminalExecution(current.status) && Date.now() < pollingDeadline) {
-        await delay(700);
-        if (executionSequenceRef.current !== sequence) {
-          return;
-        }
-        try {
-          current = await getExecution(currentRoom.code, current.executionId);
-          consecutiveFailures = 0;
-          if (executionSequenceRef.current === sequence) {
-            setExecutionResult(current);
-          }
-        } catch {
-          consecutiveFailures += 1;
-          if (consecutiveFailures >= 3) {
-            setExecutionResult({
-              ...frontendTimeoutResult(current),
-              message: 'Could not retrieve the execution result after several attempts.'
-            });
-            return;
-          }
-        }
-      }
-
-      if (!isTerminalExecution(current.status) && executionSequenceRef.current === sequence) {
-        setExecutionResult(frontendTimeoutResult(current));
-      }
-    } catch (error) {
-      if (executionSequenceRef.current === sequence) {
-        setExecutionError(executionErrorMessage(error));
-      }
-    } finally {
-      if (executionSequenceRef.current === sequence) {
-        setExecutionSubmitting(false);
-      }
-    }
-  }
-
-  function clearExecutionConsole() {
-    executionSequenceRef.current += 1;
-    setExecutionResult(null);
-    setExecutionError('');
-    setExecutionSubmitting(false);
+    await submitActiveExecution({
+      roomCode: currentRoom.code,
+      language: executionLanguage,
+      sourceCode,
+      stdin: executionStdin
+    });
   }
 
   function updateMentionState(input: HTMLInputElement) {
@@ -1818,7 +1404,7 @@ export default function App() {
   }
 
   function returnToLanding(notice = '') {
-    executionSequenceRef.current += 1;
+    clearExecutionConsole();
     if (contentSyncTimerRef.current) {
       window.clearTimeout(contentSyncTimerRef.current);
       contentSyncTimerRef.current = null;
@@ -1880,11 +1466,8 @@ export default function App() {
   async function handleSignOut() {
     publishLeftMemberEvent();
     try {
-      await logoutAuthSession();
+      await signOut();
     } finally {
-      userRef.current = { id: '', name: 'You', color: DEFAULT_COLOR };
-      setUser(userRef.current);
-      setRealtimeToken('');
       returnToLanding('Signed out.');
     }
   }
@@ -2843,14 +2426,12 @@ export default function App() {
   }
 
   async function saveProfile() {
-    let session: AuthSession;
     try {
-      session = await updateAuthProfile(profileDraftName.trim() || user.name, profileDraftAvatar);
+      await updateProfile(profileDraftName.trim() || user.name, profileDraftAvatar);
     } catch {
       showToast('Could not update your server profile.');
       return;
     }
-    applyAuthenticatedSession(session);
     const updated = userRef.current;
     setProfileOpen(false);
 
@@ -2875,84 +2456,6 @@ export default function App() {
     }
   }
 
-  function applyAuthenticatedSession(session: AuthSession) {
-    const authenticatedUser: Member = {
-      id: session.userId,
-      name: session.displayName,
-      color: DEFAULT_COLOR,
-      avatarUrl: session.avatarUrl ?? undefined
-    };
-    userRef.current = authenticatedUser;
-    setUser(authenticatedUser);
-    setRealtimeToken(session.realtimeToken);
-  }
-}
-
-function ExecutionConsole({
-  error,
-  onClear,
-  onStdinChange,
-  result,
-  stdin,
-  submitting
-}: {
-  error: string;
-  onClear: () => void;
-  onStdinChange: (value: string) => void;
-  result: ExecutionResult | null;
-  stdin: string;
-  submitting: boolean;
-}) {
-  const hasOutput = Boolean(result?.stdout || result?.stderr || result?.compileOutput || result?.message || error);
-  const running = submitting || (result ? !isTerminalExecution(result.status) : false);
-
-  return (
-    <section className="execution-console" aria-label="Execution console">
-      <header className="execution-console-header">
-        <div className="execution-console-title">
-          <SquareTerminal size={14} />
-          <strong>Console</strong>
-          {result && <span className={`execution-status execution-status-${result.status.toLowerCase()}`}>{executionStatusLabel(result.status)}</span>}
-          {result?.durationMs !== null && result?.durationMs !== undefined && <span className="execution-duration">{result.durationMs} ms</span>}
-        </div>
-        <button className="clear-console-button" disabled={!result && !error && !submitting} onClick={onClear} type="button">
-          Clear output
-        </button>
-      </header>
-      <div className="execution-console-body">
-        <label className="stdin-field">
-          <span>Standard input (optional)</span>
-          <textarea
-            onChange={(event) => onStdinChange(event.target.value)}
-            placeholder="Input passed to the program"
-            spellCheck={false}
-            value={stdin}
-          />
-        </label>
-        <div className="execution-output" aria-live="polite">
-          {running && <p className="execution-progress">{submitting ? 'Submitting securely…' : `${executionStatusLabel(result!.status)}…`}</p>}
-          {error && <section className="output-block output-system"><strong>Request failed</strong><pre>{error}</pre></section>}
-          {result?.compileOutput && <section className="output-block output-error"><strong>Compilation error</strong><pre>{result.compileOutput}</pre></section>}
-          {result?.stdout && <section className="output-block output-stdout"><strong>Standard output</strong><pre>{result.stdout}</pre></section>}
-          {result?.stderr && (
-            <section className="output-block output-error">
-              <strong>{result.status === 'RUNTIME_ERROR' ? 'Runtime error' : 'Standard error'}</strong>
-              <pre>{result.stderr}</pre>
-            </section>
-          )}
-          {result?.message && (
-            <section className={`output-block ${result.status === 'TIMED_OUT' || result.status === 'FAILED' ? 'output-system' : ''}`}>
-              <strong>{result.status === 'TIMED_OUT' ? 'Timed out' : result.status === 'FAILED' ? 'System failure' : 'Execution status'}</strong>
-              <pre>{result.message}</pre>
-            </section>
-          )}
-          {!running && !result && !hasOutput && <p className="execution-empty">Run the active file to see output here.</p>}
-          {result && isTerminalExecution(result.status) && !hasOutput && <p className="execution-empty">Process finished with no output.</p>}
-          {result?.exitCode !== null && result?.exitCode !== undefined && <p className="execution-exit-code">Process exited with code {result.exitCode}</p>}
-        </div>
-      </div>
-    </section>
-  );
 }
 
 function LandingPage({
@@ -3258,111 +2761,6 @@ function CreateItemModal({
       </section>
     </div>
   );
-}
-
-function TreeRow({
-  node,
-  activeFileId,
-  expandedFolders,
-  onDeletePath,
-  onFileSelect,
-  onToggleFolder,
-  depth = 0
-}: {
-  node: TreeNode;
-  activeFileId: string;
-  expandedFolders: Set<string>;
-  onDeletePath: (path: string, kind: 'file' | 'folder') => void;
-  onFileSelect: (fileId: string) => void;
-  onToggleFolder: (path: string) => void;
-  depth?: number;
-}) {
-  if (node.file) {
-    if (node.name === '.gitkeep') {
-      return null;
-    }
-
-    return (
-      <div className={`tree-row-wrapper ${activeFileId === node.file.id ? 'file-row-active' : ''}`}>
-        <button
-          className="tree-row file-row"
-          onClick={() => onFileSelect(node.file!.id)}
-          style={{ paddingLeft: 10 + depth * 14 }}
-          type="button"
-        >
-          <span className={`language-dot ${languageClass(node.file.language)}`} />
-          <span>{node.name}</span>
-        </button>
-        <button className="tree-delete-button" onClick={() => onDeletePath(node.file!.path, 'file')} title={`Delete ${node.name}`} type="button">
-          <Trash2 size={12} />
-        </button>
-      </div>
-    );
-  }
-
-  const expanded = expandedFolders.has(node.path);
-  return (
-    <div>
-      <div className="tree-row-wrapper">
-        <button className="tree-row folder-row" onClick={() => onToggleFolder(node.path)} style={{ paddingLeft: 8 + depth * 14 }} type="button">
-          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          <Folder size={14} />
-          <span>{node.name}</span>
-        </button>
-        <button className="tree-delete-button" onClick={() => onDeletePath(node.path, 'folder')} title={`Delete ${node.name}`} type="button">
-          <Trash2 size={12} />
-        </button>
-      </div>
-      {expanded && node.children.map((child) => (
-        <TreeRow
-          activeFileId={activeFileId}
-          depth={depth + 1}
-          expandedFolders={expandedFolders}
-          key={child.path}
-          node={child}
-          onDeletePath={onDeletePath}
-          onFileSelect={onFileSelect}
-          onToggleFolder={onToggleFolder}
-        />
-      ))}
-    </div>
-  );
-}
-
-function buildTree(files: WorkspaceFile[]): TreeNode[] {
-  const root: MutableTreeNode = { name: '', path: '', children: new Map() };
-
-  for (const file of files) {
-    const parts = file.path.split('/').filter(Boolean);
-    let cursor = root;
-    let currentPath = '';
-
-    for (let index = 0; index < parts.length; index += 1) {
-      const part = parts[index];
-      currentPath = currentPath ? `${currentPath}/${part}` : part;
-      const isFile = index === parts.length - 1;
-      if (!cursor.children.has(part)) {
-        cursor.children.set(part, { name: part, path: currentPath, children: new Map() });
-      }
-      cursor = cursor.children.get(part)!;
-      if (isFile) {
-        cursor.file = file;
-      }
-    }
-  }
-
-  return [...root.children.values()].map(toTreeNode);
-}
-
-function toTreeNode(node: MutableTreeNode): TreeNode {
-  return {
-    name: node.name,
-    path: node.path,
-    file: node.file,
-    children: [...node.children.values()]
-      .sort((a, b) => Number(Boolean(a.file)) - Number(Boolean(b.file)) || a.name.localeCompare(b.name))
-      .map(toTreeNode)
-  };
 }
 
 function getJoinCode() {
@@ -3960,28 +3358,4 @@ function hash(value: string) {
     total |= 0;
   }
   return total;
-}
-
-function delay(milliseconds: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
-}
-
-function executionErrorMessage(error: unknown) {
-  if (!(error instanceof Error)) {
-    return 'Could not submit this execution.';
-  }
-  const bodyMatch = error.message.match(/:\s*(\{.*\})$/s);
-  if (bodyMatch) {
-    try {
-      const body = JSON.parse(bodyMatch[1]) as { message?: string };
-      if (body.message) {
-        return body.message;
-      }
-    } catch {
-      // Fall through to the safe generic message below.
-    }
-  }
-  return error instanceof ApiError && error.status === 429
-    ? 'Too many executions. Try again in a minute.'
-    : 'Could not submit this execution. Check the room connection and try again.';
 }
