@@ -165,6 +165,11 @@ public class EphemeralRoomStateService {
         );
     }
 
+    public boolean isActiveMember(String code, String userId) {
+        String normalizedUserId = normalizeSessionId(userId);
+        return !normalizedUserId.isBlank() && roomExists(code) && activeUserExists(code, normalizedUserId);
+    }
+
     public RoomDto getRoomSummary(String code, String joinUrl) {
         return new RoomDto(
                 code,

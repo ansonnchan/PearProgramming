@@ -33,6 +33,23 @@ pearprogram:
     redis-broadcast-retry-ms: ${PEARPROGRAM_REALTIME_REDIS_BROADCAST_RETRY_MS:30000}
   ai:
     placeholder-mode: ${PEARPROGRAM_AI_PLACEHOLDER:false}
+  execution:
+    max-source-bytes: ${EXECUTION_MAX_SOURCE_BYTES:100000}
+    max-stdin-bytes: ${EXECUTION_MAX_STDIN_BYTES:20000}
+    rate-limit-per-minute: ${EXECUTION_RATE_LIMIT_PER_MINUTE:10}
+    record-ttl: ${EXECUTION_RECORD_TTL:15m}
+    poll-interval: ${JUDGE0_POLL_INTERVAL:750ms}
+    deadline: ${JUDGE0_EXECUTION_DEADLINE:20s}
+    max-poll-attempts: ${JUDGE0_MAX_POLL_ATTEMPTS:25}
+    worker-threads: ${EXECUTION_WORKER_THREADS:4}
+    judge0:
+      base-url: ${JUDGE0_BASE_URL:http://localhost:2358}
+      api-key: ${JUDGE0_API_KEY:}
+      api-host: ${JUDGE0_API_HOST:}
+      request-timeout: ${JUDGE0_REQUEST_TIMEOUT:5s}
+      execution-timeout-seconds: ${JUDGE0_EXECUTION_TIMEOUT_SECONDS:5}
+      max-retries: ${JUDGE0_MAX_RETRIES:2}
+      retry-backoff: ${JUDGE0_RETRY_BACKOFF:200ms}
 
 management:
   endpoints:
