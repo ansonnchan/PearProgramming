@@ -1,5 +1,7 @@
 package com.pearprogram.rooms;
 
+import com.pearprogram.workspaces.WorkspaceDto;
+import com.pearprogram.workspaces.WorkspaceService;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -7,13 +9,16 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -22,6 +27,9 @@ public class RoomService {
     private final RoomCodeGenerator roomCodeGenerator;
     private final EphemeralRoomStateService roomStateService;
     private final RoomProjectStateService projectStateService;
+    private final RoomRepository rooms;
+    private final RoomMemberRepository roomMembers;
+    private final WorkspaceService workspaces;
     private final Duration cleanupGrace;
     private final Map<String, Instant> pendingCleanup = new ConcurrentHashMap<>();
 
@@ -29,55 +37,80 @@ public class RoomService {
             RoomCodeGenerator roomCodeGenerator,
             EphemeralRoomStateService roomStateService,
             RoomProjectStateService projectStateService,
+            RoomRepository rooms,
+            RoomMemberRepository roomMembers,
+            WorkspaceService workspaces,
             @Value("${pearprogram.rooms.cleanup-grace-seconds:120}") long cleanupGraceSeconds
     ) {
         this.roomCodeGenerator = roomCodeGenerator;
         this.roomStateService = roomStateService;
         this.projectStateService = projectStateService;
+        this.rooms = rooms;
+        this.roomMembers = roomMembers;
+        this.workspaces = workspaces;
         this.cleanupGrace = Duration.ofSeconds(Math.max(30, cleanupGraceSeconds));
     }
 
-    public RoomCreateResponse createRoom() {
-        return createRoom(null, null);
-    }
-
+    @Transactional
     public RoomCreateResponse createRoom(String sessionId, String displayName) {
+        UUID ownerId = UUID.fromString(sessionId);
         String code = allocateCode();
-        var createdAt = java.time.OffsetDateTime.now();
-        roomStateService.initializeRoom(code, createdAt);
-        int memberCount = 0;
-        String normalizedSessionId = sessionId == null ? "" : sessionId.trim();
-        if (!normalizedSessionId.isBlank()) {
-            RoomJoinResponse join = roomStateService.joinRoom(code, normalizedSessionId, normalizedSessionId, displayName, null);
-            roomStateService.transferLead(code, normalizedSessionId);
-            memberCount = join.memberCount();
-        }
+        WorkspaceDto workspace = workspaces.createWorkspace("room-" + code.toLowerCase(Locale.ROOT), sessionId);
+        RoomEntity room = rooms.save(new RoomEntity(code, workspace.id(), ownerId));
+        roomMembers.save(new RoomMemberEntity(room.getId(), ownerId));
+        roomStateService.initializeRoom(code, room.getCreatedAt());
+        RoomJoinResponse join = roomStateService.joinRoom(code, sessionId, sessionId, displayName, null);
+        roomStateService.transferLead(code, sessionId);
         log.info("Created room {}", code);
-        return new RoomCreateResponse(code, buildJoinUrl(code), createdAt, memberCount);
+        return new RoomCreateResponse(code, workspace.id(), buildJoinUrl(code), room.getCreatedAt(), join.memberCount());
     }
 
-    public RoomCreateResponse createRoom(java.util.UUID ignoredWorkspaceId) {
-        return createRoom();
-    }
-
+    @Transactional(readOnly = true)
     public RoomDto getRoom(String code) {
         String normalized = normalizeRoomCode(code);
-        ensureRoomExists(normalized);
-        return roomStateService.getRoomSummary(normalized, buildJoinUrl(normalized));
+        RoomEntity room = ensureRoomExists(normalized);
+        RoomDto ephemeral = roomStateService.getRoomSummary(normalized, buildJoinUrl(normalized));
+        return new RoomDto(
+                room.getId().toString(),
+                room.getCode(),
+                room.getWorkspaceId(),
+                ephemeral.joinUrl(),
+                room.isActive(),
+                room.getCreatedAt(),
+                ephemeral.memberCount(),
+                ephemeral.maxUsers(),
+                ephemeral.locked(),
+                ephemeral.leadUserId()
+        );
     }
 
+    @Transactional(readOnly = true)
     public RoomAccessDto getRoomAccess(String code, String sessionId, String displayName) {
         String normalized = normalizeRoomCode(code);
         ensureRoomExists(normalized);
         return roomStateService.roomAccess(normalized, sessionId, displayName);
     }
 
+    @Transactional(readOnly = true)
     public void requireActiveMember(String code, String userId) {
         String normalized = normalizeRoomCode(code);
         ensureRoomExists(normalized);
         if (!roomStateService.isActiveMember(normalized, userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Room membership required");
         }
+    }
+
+    @Transactional(readOnly = true)
+    public void requireDurableMember(String code, String userId) {
+        RoomEntity room = ensureRoomExists(normalizeRoomCode(code));
+        if (!roomMembers.existsByRoomIdAndUserId(room.getId(), UUID.fromString(userId))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Room membership required");
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public UUID workspaceIdForCode(String code) {
+        return ensureRoomExists(normalizeRoomCode(code)).getWorkspaceId();
     }
 
     public List<Map<String, Object>> getRoomFiles(String code) {
@@ -98,21 +131,15 @@ public class RoomService {
         return projectStateService.upsertFiles(normalized, files);
     }
 
-    public RoomJoinResponse joinRoom(String code) {
-        String normalized = normalizeRoomCode(code);
-        ensureRoomExists(normalized);
-        return roomStateService.joinRoom(normalized);
-    }
-
-    public RoomJoinResponse joinRoom(String code, String sessionId) {
-        String normalized = normalizeRoomCode(code);
-        ensureRoomExists(normalized);
-        return roomStateService.joinRoom(normalized, sessionId, null, null);
-    }
-
+    @Transactional
     public RoomJoinResponse joinRoom(String code, String sessionId, String displayName) {
         String normalized = normalizeRoomCode(code);
-        ensureRoomExists(normalized);
+        RoomEntity room = ensureRoomExists(normalized);
+        UUID userId = UUID.fromString(sessionId);
+        RoomMemberEntity membership = roomMembers.findByRoomIdAndUserId(room.getId(), userId)
+                .orElseGet(() -> roomMembers.save(new RoomMemberEntity(room.getId(), userId)));
+        membership.touch();
+        workspaces.addMember(room.getWorkspaceId(), userId);
         return roomStateService.joinRoom(normalized, sessionId, displayName, null);
     }
 
@@ -158,21 +185,23 @@ public class RoomService {
         }
 
         roomStateService.deleteRoom(normalized);
-        projectStateService.deleteFiles(normalized);
         pendingCleanup.remove(normalized);
-        log.info("Deleted room {} after last user left", normalized);
+        log.info("Cleaned ephemeral state for inactive room {}; durable room remains available", normalized);
         return new RoomCleanupDto(normalized, true, "inactive");
     }
 
+    @Transactional
     public RoomCleanupDto closeRoom(String code) {
         String normalized = normalizeRoomCode(code);
-        if (!roomStateService.roomExists(normalized)) {
+        RoomEntity room = rooms.findByCodeAndActiveTrue(normalized).orElse(null);
+        if (room == null) {
             pendingCleanup.remove(normalized);
             return new RoomCleanupDto(normalized, false, "not_found_or_inactive");
         }
 
+        room.close();
         roomStateService.deleteRoom(normalized);
-        projectStateService.deleteFiles(normalized);
+        workspaces.deleteWorkspace(room.getWorkspaceId());
         pendingCleanup.remove(normalized);
         log.info("Deleted room {} via close-room event", normalized);
         return new RoomCleanupDto(normalized, true, "closed");
@@ -197,23 +226,26 @@ public class RoomService {
     private String allocateCode() {
         for (int attempt = 0; attempt < 20; attempt++) {
             String code = roomCodeGenerator.generateDefault();
-            if (roomStateService.reserveRoomCode(code)) {
+            if (!rooms.existsByCode(code)) {
                 return code;
             }
         }
 
         log.warn("Room code collision retry budget exhausted; using expanded room code alphabet.");
         String expandedCode = roomCodeGenerator.generateExpanded();
-        if (roomStateService.reserveRoomCode(expandedCode)) {
+        if (!rooms.existsByCode(expandedCode)) {
             return expandedCode;
         }
         throw new ResponseStatusException(HttpStatus.CONFLICT, "Unable to allocate room code");
     }
 
-    private void ensureRoomExists(String code) {
+    private RoomEntity ensureRoomExists(String code) {
+        RoomEntity room = rooms.findByCodeAndActiveTrue(code)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Room not found"));
         if (!roomStateService.roomExists(code)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Room not found");
+            roomStateService.initializeRoom(code, room.getCreatedAt());
         }
+        return room;
     }
 
     private String normalizeRoomCode(String rawCode) {

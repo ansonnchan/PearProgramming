@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/workspaces")
@@ -26,6 +27,11 @@ public class WorkspaceController {
     @PostMapping
     public WorkspaceDto create(@Valid @RequestBody CreateWorkspaceRequest request, Authentication authentication) {
         return workspaceService.createWorkspace(request.name(), identities.requirePrincipal(authentication).id());
+    }
+
+    @GetMapping
+    public List<WorkspaceDto> list(Authentication authentication) {
+        return workspaceService.listForUser(identities.requirePrincipal(authentication).id());
     }
 
     @GetMapping("/{workspaceId}")

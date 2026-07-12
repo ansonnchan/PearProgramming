@@ -31,8 +31,8 @@ public class BootstrapController {
     @PostMapping
     public BootstrapResponse createDemoRoom(Authentication authentication) {
         GuestPrincipal principal = identities.requirePrincipal(authentication);
-        WorkspaceDto workspace = workspaceService.createWorkspace("pearprogram-demo", principal.id());
         RoomCreateResponse room = roomService.createRoom(principal.id(), principal.displayName());
+        WorkspaceDto workspace = workspaceService.getWorkspace(room.workspaceId(), principal.id());
         return new BootstrapResponse(workspace, roomService.getRoom(room.code()), fileService.listFiles(workspace.id()));
     }
 }

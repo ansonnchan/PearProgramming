@@ -3,8 +3,29 @@ spring:
     name: pearprogram-backend
   autoconfigure:
     exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pearprogram}
+    username: ${SPRING_DATASOURCE_USERNAME:pearprogram}
+    password: ${SPRING_DATASOURCE_PASSWORD:pearprogram}
+    hikari:
+      maximum-pool-size: ${SPRING_DATASOURCE_MAX_POOL_SIZE:10}
+      minimum-idle: ${SPRING_DATASOURCE_MIN_IDLE:1}
+      connection-timeout: ${SPRING_DATASOURCE_CONNECTION_TIMEOUT_MS:10000}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    validate-migration-naming: true
   data:
     redis:
+      repositories:
+        enabled: false
       host: ${SPRING_REDIS_HOST:localhost}
       port: ${SPRING_REDIS_PORT:6379}
       password: ${SPRING_REDIS_PASSWORD:}

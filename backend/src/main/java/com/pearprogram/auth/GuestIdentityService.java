@@ -19,10 +19,13 @@ import java.util.UUID;
 public class GuestIdentityService {
     private final SecurityContextRepository contextRepository;
     private final RealtimeAccessTokenService realtimeTokens;
+    private final UserService users;
 
-    public GuestIdentityService(SecurityContextRepository contextRepository, RealtimeAccessTokenService realtimeTokens) {
+    public GuestIdentityService(SecurityContextRepository contextRepository, RealtimeAccessTokenService realtimeTokens,
+                                UserService users) {
         this.contextRepository = contextRepository;
         this.realtimeTokens = realtimeTokens;
+        this.users = users;
     }
 
     public AuthSessionResponse signIn(GuestSignInRequest request, Authentication currentAuthentication,
@@ -40,6 +43,7 @@ public class GuestIdentityService {
                 request.displayName().trim(),
                 normalizeAvatar(request.avatarUrl())
         );
+        users.createGuest(principal.userId(), principal.displayName(), principal.avatarUrl());
         saveAuthentication(principal, httpRequest, response);
         return response(principal);
     }
@@ -56,6 +60,7 @@ public class GuestIdentityService {
                 request.displayName().trim(),
                 normalizeAvatar(request.avatarUrl())
         );
+        users.updateProfile(updated.userId(), updated.displayName(), updated.avatarUrl());
         realtimeTokens.revokeUser(current.id());
         saveAuthentication(updated, httpRequest, response);
         return response(updated);

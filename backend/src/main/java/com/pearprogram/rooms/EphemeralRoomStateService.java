@@ -174,6 +174,7 @@ public class EphemeralRoomStateService {
         return new RoomDto(
                 code,
                 code,
+                null,
                 joinUrl,
                 roomExists(code) && isActive(code),
                 roomCreatedAt(code),

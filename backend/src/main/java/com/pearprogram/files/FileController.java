@@ -5,6 +5,7 @@ import com.pearprogram.workspaces.WorkspaceService;
 import jakarta.validation.Valid;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -56,6 +57,13 @@ public class FileController {
         FileDto file = fileService.getFile(fileId);
         workspaceService.requireAccess(file.workspaceId(), identities.requirePrincipal(authentication).id());
         return fileService.updateFile(fileId, request);
+    }
+
+    @DeleteMapping("/api/files/{fileId}")
+    public void delete(@PathVariable UUID fileId, Authentication authentication) {
+        FileDto file = fileService.getFile(fileId);
+        workspaceService.requireAccess(file.workspaceId(), identities.requirePrincipal(authentication).id());
+        fileService.deleteFile(fileId);
     }
 
     @GetMapping("/internal/files/{fileId}/snapshot")

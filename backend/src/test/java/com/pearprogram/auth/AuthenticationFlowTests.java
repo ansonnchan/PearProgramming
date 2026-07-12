@@ -9,6 +9,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.context.ActiveProfiles;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -25,6 +26,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "pearprogram.realtime.redis-broadcast-enabled=false"
 })
 @AutoConfigureMockMvc
+@ActiveProfiles("test")
 class AuthenticationFlowTests {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;

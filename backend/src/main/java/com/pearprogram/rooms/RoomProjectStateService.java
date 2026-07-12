@@ -1,125 +1,58 @@
 package com.pearprogram.rooms;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import com.pearprogram.files.FileDto;
+import com.pearprogram.files.FileService;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
-import java.time.Duration;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class RoomProjectStateService {
-    private static final Logger log = LoggerFactory.getLogger(RoomProjectStateService.class);
-    private static final TypeReference<List<Map<String, Object>>> FILE_LIST_TYPE = new TypeReference<>() {
-    };
+    private final RoomRepository rooms;
+    private final FileService files;
 
-    private final StringRedisTemplate redisTemplate;
-    private final ObjectMapper objectMapper;
-    private final String keyPrefix;
-    private final Duration ttl = Duration.ofHours(24);
-    private final Map<String, List<Map<String, Object>>> localFiles = new ConcurrentHashMap<>();
-
-    public RoomProjectStateService(
-            StringRedisTemplate redisTemplate,
-            ObjectMapper objectMapper,
-            @Value("${pearprogram.redis.key-prefix:pearprogram}") String keyPrefix
-    ) {
-        this.redisTemplate = redisTemplate;
-        this.objectMapper = objectMapper;
-        this.keyPrefix = normalizeKeyPrefix(keyPrefix);
+    public RoomProjectStateService(RoomRepository rooms, FileService files) {
+        this.rooms = rooms;
+        this.files = files;
     }
 
+    @Transactional(readOnly = true)
     public List<Map<String, Object>> getFiles(String roomCode) {
-        try {
-            String raw = redisTemplate.opsForValue().get(roomFilesKey(roomCode));
-            if (raw == null || raw.isBlank()) {
-                return List.of();
-            }
-            return objectMapper.readValue(raw, FILE_LIST_TYPE);
-        } catch (RuntimeException | JsonProcessingException ex) {
-            log.warn("Unable to load Redis-backed room file snapshot for {}; using local fallback. reason={}",
-                    roomCode, rootCauseMessage(ex));
-            return localFiles.getOrDefault(roomCode, List.of());
-        }
+        RoomEntity room = requireRoom(roomCode);
+        return files.listFiles(room.getWorkspaceId()).stream().map(this::toMap).toList();
     }
 
-    public List<Map<String, Object>> saveFiles(String roomCode, List<Map<String, Object>> files) {
-        List<Map<String, Object>> safeFiles = files == null ? List.of() : List.copyOf(files);
-        localFiles.put(roomCode, safeFiles);
-        try {
-            redisTemplate.opsForValue().set(roomFilesKey(roomCode), objectMapper.writeValueAsString(safeFiles), ttl);
-            log.info("Saved room file snapshot for {} with {} file(s)", roomCode, safeFiles.size());
-        } catch (RuntimeException | JsonProcessingException ex) {
-            log.warn("Unable to save Redis-backed room file snapshot for {}; local fallback only. reason={}",
-                    roomCode, rootCauseMessage(ex));
-        }
-        return safeFiles;
+    @Transactional
+    public List<Map<String, Object>> saveFiles(String roomCode, List<Map<String, Object>> incoming) {
+        RoomEntity room = requireRoom(roomCode);
+        return files.synchronizeWorkspace(room.getWorkspaceId(), incoming, true).stream().map(this::toMap).toList();
     }
 
-    public List<Map<String, Object>> upsertFiles(String roomCode, List<Map<String, Object>> files) {
-        List<Map<String, Object>> incomingFiles = files == null ? List.of() : files;
-        if (incomingFiles.isEmpty()) {
-            return getFiles(roomCode);
-        }
-
-        Map<String, Map<String, Object>> byKey = new LinkedHashMap<>();
-        for (Map<String, Object> file : getFiles(roomCode)) {
-            byKey.put(fileKey(file), file);
-        }
-        for (Map<String, Object> file : incomingFiles) {
-            byKey.put(fileKey(file), file);
-        }
-        return saveFiles(roomCode, new ArrayList<>(byKey.values()));
+    @Transactional
+    public List<Map<String, Object>> upsertFiles(String roomCode, List<Map<String, Object>> incoming) {
+        RoomEntity room = requireRoom(roomCode);
+        return files.synchronizeWorkspace(room.getWorkspaceId(), incoming, false).stream().map(this::toMap).toList();
     }
 
-    public void deleteFiles(String roomCode) {
-        localFiles.remove(roomCode);
-        try {
-            redisTemplate.delete(roomFilesKey(roomCode));
-        } catch (RuntimeException ex) {
-            log.warn("Unable to delete Redis-backed room file snapshot for {}. reason={}", roomCode, rootCauseMessage(ex));
-        }
+    private RoomEntity requireRoom(String code) {
+        return rooms.findByCodeAndActiveTrue(code)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Room not found"));
     }
 
-    private String roomFilesKey(String roomCode) {
-        return keyPrefix + ":room:" + roomCode + ":files";
-    }
-
-    private String fileKey(Map<String, Object> file) {
-        Object id = file.get("id");
-        if (id != null && !id.toString().isBlank()) {
-            return "id:" + id;
-        }
-
-        Object path = file.get("path");
-        if (path != null && !path.toString().isBlank()) {
-            return "path:" + path;
-        }
-
-        return "object:" + file.hashCode();
-    }
-
-    private String normalizeKeyPrefix(String raw) {
-        String normalized = raw == null ? "" : raw.trim().replaceAll("^:+|:+$", "");
-        return normalized.isBlank() ? "pearprogram" : normalized;
-    }
-
-    private String rootCauseMessage(Throwable ex) {
-        Throwable current = ex;
-        while (current.getCause() != null) {
-            current = current.getCause();
-        }
-        return current.getMessage() == null || current.getMessage().isBlank()
-                ? current.getClass().getSimpleName()
-                : current.getMessage();
+    private Map<String, Object> toMap(FileDto file) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("id", file.id().toString());
+        value.put("workspaceId", file.workspaceId().toString());
+        value.put("path", file.path());
+        value.put("language", file.language());
+        value.put("content", file.content());
+        value.put("createdAt", file.createdAt().toString());
+        value.put("updatedAt", file.updatedAt().toString());
+        return value;
     }
 }
