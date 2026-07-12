@@ -64,6 +64,26 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   yml: 'yaml'
 };
 
+export const EXECUTION_LANGUAGES = [
+  { id: 'java', label: 'Java' },
+  { id: 'python', label: 'Python' },
+  { id: 'javascript', label: 'JavaScript (Node.js)' },
+  { id: 'c', label: 'C' },
+  { id: 'cpp', label: 'C++' }
+] as const;
+
+export type ExecutionLanguage = typeof EXECUTION_LANGUAGES[number]['id'];
+
+export function executionLanguageForEditorLanguage(language?: string): ExecutionLanguage | null {
+  if (!language) {
+    return null;
+  }
+  if (language === 'java' || language === 'python' || language === 'javascript' || language === 'c' || language === 'cpp') {
+    return language;
+  }
+  return null;
+}
+
 export function inferLanguage(path: string) {
   const extension = path.split('.').pop()?.toLowerCase() ?? '';
   return LANGUAGE_BY_EXTENSION[extension] ?? 'plaintext';

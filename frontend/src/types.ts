@@ -128,3 +128,26 @@ export type RoomSessionState = {
   landingCode: string;
   chatDraft: string;
 };
+
+export type ExecutionStatus =
+  | 'QUEUED'
+  | 'SUBMITTED'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'COMPILATION_ERROR'
+  | 'RUNTIME_ERROR'
+  | 'TIMED_OUT'
+  | 'FAILED';
+
+export type ExecutionResult = {
+  executionId: string;
+  status: ExecutionStatus;
+  stdout: string | null;
+  stderr: string | null;
+  compileOutput: string | null;
+  exitCode: number | null;
+  durationMs: number | null;
+  message: string | null;
+  createdAt: string;
+  completedAt: string | null;
+};

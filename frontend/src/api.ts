@@ -1,4 +1,4 @@
-import type { AiAnnotation, BootstrapResponse, ChatMessage, Room, RoomAccess, RoomCreateResponse, RoomJoinResponse, Workspace, WorkspaceFile } from './types';
+import type { AiAnnotation, BootstrapResponse, ChatMessage, ExecutionResult, Room, RoomAccess, RoomCreateResponse, RoomJoinResponse, Workspace, WorkspaceFile } from './types';
 import type { UploadCandidate } from './uploads';
 import { getOptionalUrlEnv, getRequiredUrlEnv, logResolvedFrontendEnv } from './env';
 
@@ -107,6 +107,24 @@ export async function updateFileContent(fileId: string, content: string): Promis
   return patchJson<WorkspaceFile>(`/api/files/${encodeURIComponent(fileId)}`, { content });
 }
 
+export async function submitExecution(
+  roomCode: string,
+  sessionId: string,
+  idempotencyKey: string,
+  request: { language: string; sourceCode: string; stdin: string }
+): Promise<ExecutionResult> {
+  return requestJson<ExecutionResult>('POST', `/api/rooms/${encodeURIComponent(roomCode)}/executions`, request, {
+    'X-Pear-Session-Id': sessionId,
+    'Idempotency-Key': idempotencyKey
+  });
+}
+
+export async function getExecution(roomCode: string, executionId: string, sessionId: string): Promise<ExecutionResult> {
+  return requestJson<ExecutionResult>('GET', `/api/rooms/${encodeURIComponent(roomCode)}/executions/${encodeURIComponent(executionId)}`, undefined, {
+    'X-Pear-Session-Id': sessionId
+  });
+}
+
 
 
 export async function listChatHistory(code: string): Promise<ChatMessage[]> {
@@ -166,6 +184,21 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
   });
   if (!response.ok) {
     throw await toApiError('PATCH', path, response);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function requestJson<T>(method: 'GET' | 'POST', path: string, body: unknown, headers: Record<string, string>): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers: {
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...headers
+    },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw await toApiError(method, path, response);
   }
   return response.json() as Promise<T>;
 }

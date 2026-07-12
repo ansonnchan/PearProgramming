@@ -12,7 +12,9 @@ import {
   FolderPlus,
   ImagePlus,
   MessageSquare,
+  Play,
   Send,
+  SquareTerminal,
   Trash2,
   Upload,
   UserRound,
@@ -31,6 +33,7 @@ import {
   createFile,
   createRoom,
   dismissAnnotation,
+  getExecution,
   getRoom,
   getRoomFiles,
   getRoomAccess,
@@ -39,16 +42,18 @@ import {
   listChatHistory,
   STOMP_URL,
   saveRoomFiles,
+  submitExecution,
   updateFileContent,
   uploadWorkspaceFiles,
   YJS_URL
 } from './api';
-import { inferLanguage, languageClass } from './language';
+import { EXECUTION_LANGUAGES, executionLanguageForEditorLanguage, inferLanguage, languageClass, type ExecutionLanguage } from './language';
+import { executionStatusLabel, frontendTimeoutResult, isTerminalExecution } from './execution/state';
 import pearLogoUrl from '../assets/favicon.png';
 import pearChibiUrl from '../assets/pear_chibi.jpg';
 import type { UploadCandidate, UploadReadResult } from './uploads';
 import { projectNameForPaths, readDroppedUploadCandidates, readUploadCandidates, UPLOAD_ACCEPT } from './uploads';
-import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, RoomSessionState, WorkspaceFile } from './types';
+import type { AiAnnotation, ChatMessage, CursorMessage, ExecutionResult, Member, ProjectSwitchEvent, Room, RoomSessionState, WorkspaceFile } from './types';
 
 const DEFAULT_COLOR = '#000000';
 const ROOM_SESSION_STORAGE_KEY = 'pearprogram-room-session';
@@ -173,6 +178,12 @@ export default function App() {
   const [user, setUser] = useState<Member>(() => getOrCreateLocalUser());
   const [connectionId] = useState(() => getOrCreateConnectionId());
   const [editorMountVersion, setEditorMountVersion] = useState(0);
+  const [executionLanguage, setExecutionLanguage] = useState<ExecutionLanguage>('javascript');
+  const [executionStdin, setExecutionStdin] = useState('');
+  const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
+  const [executionError, setExecutionError] = useState('');
+  const [executionSubmitting, setExecutionSubmitting] = useState(false);
+  const [executionPanelOpen, setExecutionPanelOpen] = useState(true);
 
   const openFiles = openFileIds
     .map((fileId) => files.find((file) => file.id === fileId))
@@ -227,6 +238,7 @@ export default function App() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const entryAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const bootstrappedRoomRef = useRef(false);
+  const executionSequenceRef = useRef(0);
 
   const handleJoinRoom = useCallback(async (rawCode: string, displayName?: string, replaceUrl = true) => {
     const code = normalizeRoomCode(rawCode);
@@ -379,6 +391,20 @@ export default function App() {
   useEffect(() => {
     activeFileRef.current = activeFile;
   }, [activeFile]);
+
+  useEffect(() => {
+    const inferred = executionLanguageForEditorLanguage(activeFile?.language);
+    if (inferred) {
+      setExecutionLanguage(inferred);
+    }
+  }, [activeFile?.id, activeFile?.language]);
+
+  useEffect(() => {
+    executionSequenceRef.current += 1;
+    setExecutionResult(null);
+    setExecutionError('');
+    setExecutionSubmitting(false);
+  }, [activeFile?.id]);
 
   useEffect(() => {
     activeFileIdRef.current = activeFileId;
@@ -1047,6 +1073,31 @@ export default function App() {
               </div>
             ))}
           </div>
+          <div className="execution-toolbar">
+            <button
+              className="run-button"
+              disabled={!activeFile || executionSubmitting}
+              onClick={() => void runActiveFile()}
+              title={activeFile ? 'Run the current collaborative document' : 'Open a file to run code'}
+              type="button"
+            >
+              <Play size={14} />
+              {executionSubmitting ? 'Submitting…' : 'Run'}
+            </button>
+            <label className="execution-language-label">
+              <span>Language</span>
+              <select onChange={(event) => setExecutionLanguage(event.target.value as ExecutionLanguage)} value={executionLanguage}>
+                {EXECUTION_LANGUAGES.map((language) => (
+                  <option key={language.id} value={language.id}>{language.label}</option>
+                ))}
+              </select>
+            </label>
+            {executionLanguage === 'java' && <span className="java-main-hint">Java entry class: Main</span>}
+            <button className="console-toggle" onClick={() => setExecutionPanelOpen((current) => !current)} type="button">
+              <SquareTerminal size={14} />
+              {executionPanelOpen ? 'Hide console' : 'Show console'}
+            </button>
+          </div>
           <div className="editor-frame">
             {activeFile ? (
               <Editor
@@ -1087,6 +1138,16 @@ export default function App() {
               </div>
             )}
           </div>
+          {executionPanelOpen && (
+            <ExecutionConsole
+              error={executionError}
+              onClear={clearExecutionConsole}
+              onStdinChange={setExecutionStdin}
+              result={executionResult}
+              stdin={executionStdin}
+              submitting={executionSubmitting}
+            />
+          )}
         </section>
 
         {chatOpen ? (
@@ -1363,6 +1424,7 @@ export default function App() {
   }
 
   function openRoom(nextRoom: Room, nextFiles: WorkspaceFile[], replaceUrl: boolean, restoredState?: RoomSessionState) {
+    executionSequenceRef.current += 1;
     const sortedFiles = nextFiles.sort(sortByPath);
     const restoredOpenFileIds = restoredState?.openFileIds ?? [];
     const nextOpenFileIds = restoredOpenFileIds.filter((fileId) => sortedFiles.some((file) => file.id === fileId));
@@ -1396,6 +1458,9 @@ export default function App() {
     setCursorPosition(restoredState?.cursorPosition ?? { line: 1, col: 1 });
     setSaveState(sortedFiles.length > 0 ? 'saved' : 'idle');
     setLastSavedAt(null);
+    setExecutionResult(null);
+    setExecutionError('');
+    setExecutionSubmitting(false);
     if (replaceUrl) {
       window.history.replaceState(null, '', `/join/${nextRoom.code}`);
     }
@@ -1454,6 +1519,80 @@ export default function App() {
     }
 
     setChatDraft('');
+  }
+
+  async function runActiveFile() {
+    const currentRoom = roomRef.current;
+    const currentFile = activeFileRef.current;
+    if (!currentRoom || !currentFile || executionSubmitting) {
+      return;
+    }
+
+    const editor = editorRef.current as { getValue?: () => string } | null;
+    const sourceCode = editor?.getValue?.() ?? currentFile.content;
+    const sequence = executionSequenceRef.current + 1;
+    executionSequenceRef.current = sequence;
+    setExecutionSubmitting(true);
+    setExecutionPanelOpen(true);
+    setExecutionError('');
+    setExecutionResult(null);
+
+    try {
+      let current = await submitExecution(currentRoom.code, userRef.current.id, crypto.randomUUID(), {
+        language: executionLanguage,
+        sourceCode,
+        stdin: executionStdin
+      });
+      if (executionSequenceRef.current !== sequence) {
+        return;
+      }
+      setExecutionResult(current);
+      setExecutionSubmitting(false);
+
+      const pollingDeadline = Date.now() + 35_000;
+      let consecutiveFailures = 0;
+      while (!isTerminalExecution(current.status) && Date.now() < pollingDeadline) {
+        await delay(700);
+        if (executionSequenceRef.current !== sequence) {
+          return;
+        }
+        try {
+          current = await getExecution(currentRoom.code, current.executionId, userRef.current.id);
+          consecutiveFailures = 0;
+          if (executionSequenceRef.current === sequence) {
+            setExecutionResult(current);
+          }
+        } catch {
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= 3) {
+            setExecutionResult({
+              ...frontendTimeoutResult(current),
+              message: 'Could not retrieve the execution result after several attempts.'
+            });
+            return;
+          }
+        }
+      }
+
+      if (!isTerminalExecution(current.status) && executionSequenceRef.current === sequence) {
+        setExecutionResult(frontendTimeoutResult(current));
+      }
+    } catch (error) {
+      if (executionSequenceRef.current === sequence) {
+        setExecutionError(executionErrorMessage(error));
+      }
+    } finally {
+      if (executionSequenceRef.current === sequence) {
+        setExecutionSubmitting(false);
+      }
+    }
+  }
+
+  function clearExecutionConsole() {
+    executionSequenceRef.current += 1;
+    setExecutionResult(null);
+    setExecutionError('');
+    setExecutionSubmitting(false);
   }
 
   function updateMentionState(input: HTMLInputElement) {
@@ -1629,6 +1768,7 @@ export default function App() {
   }
 
   function returnToLanding(notice = '') {
+    executionSequenceRef.current += 1;
     if (contentSyncTimerRef.current) {
       window.clearTimeout(contentSyncTimerRef.current);
       contentSyncTimerRef.current = null;
@@ -2662,6 +2802,73 @@ export default function App() {
   }
 }
 
+function ExecutionConsole({
+  error,
+  onClear,
+  onStdinChange,
+  result,
+  stdin,
+  submitting
+}: {
+  error: string;
+  onClear: () => void;
+  onStdinChange: (value: string) => void;
+  result: ExecutionResult | null;
+  stdin: string;
+  submitting: boolean;
+}) {
+  const hasOutput = Boolean(result?.stdout || result?.stderr || result?.compileOutput || result?.message || error);
+  const running = submitting || (result ? !isTerminalExecution(result.status) : false);
+
+  return (
+    <section className="execution-console" aria-label="Execution console">
+      <header className="execution-console-header">
+        <div className="execution-console-title">
+          <SquareTerminal size={14} />
+          <strong>Console</strong>
+          {result && <span className={`execution-status execution-status-${result.status.toLowerCase()}`}>{executionStatusLabel(result.status)}</span>}
+          {result?.durationMs !== null && result?.durationMs !== undefined && <span className="execution-duration">{result.durationMs} ms</span>}
+        </div>
+        <button className="clear-console-button" disabled={!result && !error && !submitting} onClick={onClear} type="button">
+          Clear output
+        </button>
+      </header>
+      <div className="execution-console-body">
+        <label className="stdin-field">
+          <span>Standard input (optional)</span>
+          <textarea
+            onChange={(event) => onStdinChange(event.target.value)}
+            placeholder="Input passed to the program"
+            spellCheck={false}
+            value={stdin}
+          />
+        </label>
+        <div className="execution-output" aria-live="polite">
+          {running && <p className="execution-progress">{submitting ? 'Submitting securely…' : `${executionStatusLabel(result!.status)}…`}</p>}
+          {error && <section className="output-block output-system"><strong>Request failed</strong><pre>{error}</pre></section>}
+          {result?.compileOutput && <section className="output-block output-error"><strong>Compilation error</strong><pre>{result.compileOutput}</pre></section>}
+          {result?.stdout && <section className="output-block output-stdout"><strong>Standard output</strong><pre>{result.stdout}</pre></section>}
+          {result?.stderr && (
+            <section className="output-block output-error">
+              <strong>{result.status === 'RUNTIME_ERROR' ? 'Runtime error' : 'Standard error'}</strong>
+              <pre>{result.stderr}</pre>
+            </section>
+          )}
+          {result?.message && (
+            <section className={`output-block ${result.status === 'TIMED_OUT' || result.status === 'FAILED' ? 'output-system' : ''}`}>
+              <strong>{result.status === 'TIMED_OUT' ? 'Timed out' : result.status === 'FAILED' ? 'System failure' : 'Execution status'}</strong>
+              <pre>{result.message}</pre>
+            </section>
+          )}
+          {!running && !result && !hasOutput && <p className="execution-empty">Run the active file to see output here.</p>}
+          {result && isTerminalExecution(result.status) && !hasOutput && <p className="execution-empty">Process finished with no output.</p>}
+          {result?.exitCode !== null && result?.exitCode !== undefined && <p className="execution-exit-code">Process exited with code {result.exitCode}</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function LandingPage({
   backendWakeUrl,
   code,
@@ -3687,4 +3894,28 @@ function hash(value: string) {
     total |= 0;
   }
   return total;
+}
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function executionErrorMessage(error: unknown) {
+  if (!(error instanceof Error)) {
+    return 'Could not submit this execution.';
+  }
+  const bodyMatch = error.message.match(/:\s*(\{.*\})$/s);
+  if (bodyMatch) {
+    try {
+      const body = JSON.parse(bodyMatch[1]) as { message?: string };
+      if (body.message) {
+        return body.message;
+      }
+    } catch {
+      // Fall through to the safe generic message below.
+    }
+  }
+  return error instanceof ApiError && error.status === 429
+    ? 'Too many executions. Try again in a minute.'
+    : 'Could not submit this execution. Check the room connection and try again.';
 }
