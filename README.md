@@ -35,7 +35,10 @@ Pear Programming home page</em>
 backend/   Spring Boot API, WebSocket/STOMP, Redis-backed room presence, metrics
 realtime/  Node y-websocket service with optional Redis persistence and snapshot flushing
 frontend/  Vite + React + TypeScript + Monaco collaborative editor UI
+docs/      Deployment and operational documentation
 ```
+
+For the production Compose topology, HTTPS/WebSocket routing, migrations, backups, recovery, and scaling constraints, see [docs/deployment.md](docs/deployment.md).
 
 ## Local Prerequisites
 
