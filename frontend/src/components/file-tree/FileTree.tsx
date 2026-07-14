@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronRight, Folder, Trash2 } from 'lucide-react';
+import { Braces, ChevronDown, ChevronRight, FileCode2, FileText, Folder, Trash2 } from 'lucide-react';
+import type { KeyboardEvent } from 'react';
 import { languageClass } from '../../language';
 import type { WorkspaceFile } from '../../types';
 
@@ -17,9 +18,9 @@ type FileTreeProps = {
 export function FileTree(props: FileTreeProps) {
   const tree = buildTree(props.files);
   if (tree.length === 0) {
-    return <div className="empty-tree">No files yet</div>;
+    return <div className="empty-tree" role="status">No workspace files yet</div>;
   }
-  return <>{tree.map((node) => <TreeRow {...props} key={node.path} node={node} />)}</>;
+  return <div aria-label="Workspace files" className="tree-items" role="tree">{tree.map((node) => <TreeRow {...props} key={node.path} node={node} />)}</div>;
 }
 
 function TreeRow({ node, activeFileId, expandedFolders, onDeletePath, onFileSelect, onToggleFolder, depth = 0 }: Omit<FileTreeProps, 'files'> & { node: TreeNode; depth?: number }) {
@@ -27,11 +28,21 @@ function TreeRow({ node, activeFileId, expandedFolders, onDeletePath, onFileSele
     if (node.name === '.gitkeep') return null;
     return (
       <div className={`tree-row-wrapper ${activeFileId === node.file.id ? 'file-row-active' : ''}`}>
-        <button className="tree-row file-row" onClick={() => onFileSelect(node.file!.id)} style={{ paddingLeft: 10 + depth * 14 }} type="button">
-          <span className={`language-dot ${languageClass(node.file.language)}`} />
+        <button
+          aria-level={depth + 1}
+          aria-selected={activeFileId === node.file.id}
+          className="tree-row file-row"
+          data-tree-depth={depth}
+          onClick={() => onFileSelect(node.file!.id)}
+          onKeyDown={(event) => handleTreeKeyDown(event, { depth })}
+          role="treeitem"
+          style={{ paddingLeft: 12 + depth * 15 }}
+          type="button"
+        >
+          <span className={`tree-file-icon ${languageClass(node.file.language)}`}>{fileIcon(node.file.path)}</span>
           <span>{node.name}</span>
         </button>
-        <button className="tree-delete-button" onClick={() => onDeletePath(node.file!.path, 'file')} title={`Delete ${node.name}`} type="button"><Trash2 size={12} /></button>
+        <button aria-label={`Delete ${node.name}`} className="tree-delete-button" onClick={() => onDeletePath(node.file!.path, 'file')} title={`Delete ${node.name}`} type="button"><Trash2 size={12} /></button>
       </div>
     );
   }
@@ -40,17 +51,79 @@ function TreeRow({ node, activeFileId, expandedFolders, onDeletePath, onFileSele
   return (
     <div>
       <div className="tree-row-wrapper">
-        <button className="tree-row folder-row" onClick={() => onToggleFolder(node.path)} style={{ paddingLeft: 8 + depth * 14 }} type="button">
+        <button
+          aria-expanded={expanded}
+          aria-level={depth + 1}
+          className="tree-row folder-row"
+          data-tree-depth={depth}
+          onClick={() => onToggleFolder(node.path)}
+          onKeyDown={(event) => handleTreeKeyDown(event, { depth, expanded, onToggle: () => onToggleFolder(node.path) })}
+          role="treeitem"
+          style={{ paddingLeft: 10 + depth * 15 }}
+          type="button"
+        >
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<Folder size={14} /><span>{node.name}</span>
         </button>
-        <button className="tree-delete-button" onClick={() => onDeletePath(node.path, 'folder')} title={`Delete ${node.name}`} type="button"><Trash2 size={12} /></button>
+        <button aria-label={`Delete ${node.name}`} className="tree-delete-button" onClick={() => onDeletePath(node.path, 'folder')} title={`Delete ${node.name}`} type="button"><Trash2 size={12} /></button>
       </div>
-      {expanded && node.children.map((child) => (
-        <TreeRow activeFileId={activeFileId} depth={depth + 1} expandedFolders={expandedFolders} key={child.path} node={child}
-          onDeletePath={onDeletePath} onFileSelect={onFileSelect} onToggleFolder={onToggleFolder} />
-      ))}
+      {expanded && (
+        <div role="group">
+          {node.children.map((child) => (
+            <TreeRow activeFileId={activeFileId} depth={depth + 1} expandedFolders={expandedFolders} key={child.path} node={child}
+              onDeletePath={onDeletePath} onFileSelect={onFileSelect} onToggleFolder={onToggleFolder} />
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+function handleTreeKeyDown(event: KeyboardEvent<HTMLButtonElement>, options: { depth: number; expanded?: boolean; onToggle?: () => void }) {
+  const tree = event.currentTarget.closest('[role="tree"]');
+  const items = tree ? Array.from(tree.querySelectorAll<HTMLButtonElement>('[role="treeitem"]')) : [];
+  const currentIndex = items.indexOf(event.currentTarget);
+  const focusItem = (index: number) => items[Math.max(0, Math.min(index, items.length - 1))]?.focus();
+
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    focusItem(currentIndex + 1);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    focusItem(currentIndex - 1);
+  } else if (event.key === 'Home') {
+    event.preventDefault();
+    focusItem(0);
+  } else if (event.key === 'End') {
+    event.preventDefault();
+    focusItem(items.length - 1);
+  } else if (event.key === 'ArrowRight' && options.onToggle) {
+    event.preventDefault();
+    if (!options.expanded) {
+      options.onToggle();
+    } else {
+      const next = items[currentIndex + 1];
+      if (Number(next?.dataset.treeDepth) > options.depth) next.focus();
+    }
+  } else if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+    if (options.onToggle && options.expanded) {
+      options.onToggle();
+      return;
+    }
+    for (let index = currentIndex - 1; index >= 0; index -= 1) {
+      if (Number(items[index].dataset.treeDepth) < options.depth) {
+        items[index].focus();
+        break;
+      }
+    }
+  }
+}
+
+function fileIcon(path: string) {
+  const extension = path.split('.').pop()?.toLowerCase();
+  if (extension === 'json') return <Braces size={14} />;
+  if (extension === 'md' || extension === 'txt') return <FileText size={14} />;
+  return <FileCode2 size={14} />;
 }
 
 export function buildTree(files: WorkspaceFile[]): TreeNode[] {

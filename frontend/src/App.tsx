@@ -7,6 +7,7 @@ import {
   Copy,
   Download,
   FilePlus2,
+  Folder,
   FolderPlus,
   ImagePlus,
   PanelLeftClose,
@@ -768,32 +769,50 @@ export default function App() {
 
       <section className={workspaceClass}>
         {explorerOpen ? (
-        <aside className="explorer" id="workspace-explorer">
+        <aside
+          className={`explorer ${uploadDragging && !uploadModalOpen ? 'explorer-dragging' : ''}`}
+          id="workspace-explorer"
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setUploadDragging(true);
+          }}
+          onDragLeave={(event) => {
+            const nextTarget = event.relatedTarget;
+            if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+              setUploadDragging(false);
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+            setUploadDragging(true);
+          }}
+          onDrop={(event) => void handleUploadDrop(event)}
+        >
           <div className="pane-title-row">
             <span className="pane-title">Explorer</span>
             <div className="icon-row">
-              <button className="icon-button" onClick={handleNewFile} type="button" title="New file">
-                <FilePlus2 size={15} />
-              </button>
-              <button className="icon-button" onClick={handleNewFolder} type="button" title="New folder">
-                <FolderPlus size={15} />
-              </button>
-              <button className="icon-button" disabled={files.length === 0} onClick={exportWorkspace} type="button" title="Download project">
-                <Download size={15} />
-              </button>
               <button aria-label="Hide explorer" className="icon-button panel-minimize-button" onClick={() => setExplorerOpen(false)} type="button" title="Hide explorer">
                 <PanelLeftClose size={16} />
               </button>
             </div>
           </div>
-          <div className="upload-actions">
-            <button className="upload-button" onClick={openUploadModal} type="button">
-              <Upload size={14} />
-              <span>Upload File</span>
+          <div className="explorer-actions" aria-label="Explorer actions">
+            <button className="sidebar-action" onClick={openFilePicker} type="button">
+              <Upload size={15} />
+              <span>Upload file</span>
             </button>
-            <button className="upload-button" onClick={openUploadModal} type="button">
-              <FolderPlus size={14} />
-              <span>Upload Folder</span>
+            <button className="sidebar-action" onClick={openFolderPicker} type="button">
+              <FolderPlus size={15} />
+              <span>Upload folder</span>
+            </button>
+            <button className="sidebar-action" onClick={handleNewFile} type="button">
+              <FilePlus2 size={15} />
+              <span>New file</span>
+            </button>
+            <button className="sidebar-action" onClick={handleNewFolder} type="button">
+              <FolderPlus size={15} />
+              <span>New folder</span>
             </button>
           </div>
           {/* Hidden file input — individual files, no webkitdirectory */}
@@ -818,8 +837,39 @@ export default function App() {
               </button>
             </div>
           )}
-          <div className="tree"><FileTree activeFileId={activeFile?.id ?? ''} expandedFolders={expandedFolders} files={files}
-            onDeletePath={deleteTreePath} onFileSelect={openFileTab} onToggleFolder={toggleFolder} /></div>
+          <section className="explorer-section workspace-section" aria-labelledby="workspace-section-title">
+            <div className="explorer-section-heading">
+              <span id="workspace-section-title">Workspace</span>
+              <button aria-label="Download project" className="icon-button" disabled={files.length === 0} onClick={exportWorkspace} title="Download project" type="button">
+                <Download size={15} />
+              </button>
+            </div>
+            <div className="workspace-root" title={activeProjectName}>
+              <Folder size={15} />
+              <span>{activeProjectName === 'Empty room' ? 'Room workspace' : activeProjectName}</span>
+            </div>
+            <div className="tree"><FileTree activeFileId={activeFile?.id ?? ''} expandedFolders={expandedFolders} files={files}
+              onDeletePath={deleteTreePath} onFileSelect={openFileTab} onToggleFolder={toggleFolder} /></div>
+          </section>
+          <section className="explorer-section shared-files-section" aria-labelledby="shared-files-title">
+            <div className="explorer-section-heading">
+              <span id="shared-files-title">Shared files</span>
+              {files.length > 0 && <span className="shared-file-count">{files.length}</span>}
+            </div>
+            <div className="shared-files-state">
+              <img alt="" src={pearLogoUrl} />
+              <div>
+                <strong>{files.length > 0 ? `${files.length} ${files.length === 1 ? 'file' : 'files'} shared` : 'No files shared yet'}</strong>
+                <span>{files.length > 0 ? 'Workspace changes sync with every pear.' : 'Drop files here to share them with the room.'}</span>
+              </div>
+            </div>
+          </section>
+          {uploadDragging && !uploadModalOpen && (
+            <div className="explorer-drop-overlay" aria-hidden="true">
+              <Upload size={24} />
+              <strong>Drop to share</strong>
+            </div>
+          )}
         </aside>
         ) : (
           <aside className="explorer-rail">
