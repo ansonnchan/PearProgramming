@@ -26,9 +26,14 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper,
                                             SecurityContextRepository contextRepository,
-                                            @Value("${pearprogram.auth.internal-service-token:}") String internalServiceToken) throws Exception {
+                                            @Value("${pearprogram.auth.internal-service-token:}") String internalServiceToken,
+                                            @Value("${server.servlet.session.cookie.secure:false}") boolean cookieSecure,
+                                            @Value("${server.servlet.session.cookie.same-site:lax}") String cookieSameSite) throws Exception {
         CookieCsrfTokenRepository csrfRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepository.setCookiePath("/");
+        csrfRepository.setCookieCustomizer(cookie -> cookie
+                .secure(cookieSecure)
+                .sameSite(cookieSameSite));
 
         http
                 .cors(Customizer.withDefaults())
