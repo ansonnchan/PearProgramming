@@ -1,4 +1,4 @@
-import { Bot, Send } from 'lucide-react';
+import { Bot, PanelRightClose, Send } from 'lucide-react';
 import type { KeyboardEvent, ReactNode, RefObject } from 'react';
 import type { ChatMessage, Member } from '../../types';
 
@@ -28,12 +28,14 @@ export function ChatPanel({
   onDraftInput, onInsertMention, onMentionKeyDown, onSend, renderContent, messageMentionsUser
 }: ChatPanelProps) {
   return (
-    <aside className="chat">
+    <aside className="chat" id="room-chat">
       <div className="pane-title-row chat-title-row">
         <span className="pane-title">Room chat</span>
         <div className="chat-title-tools">
           <span className="shared-label">{nowLabel}</span>
-          <button className="icon-button panel-minimize-button" onClick={onClose} title="Minimize chat" type="button">-</button>
+          <button aria-label="Hide room chat" className="icon-button panel-minimize-button" onClick={onClose} title="Hide room chat" type="button">
+            <PanelRightClose size={16} />
+          </button>
         </div>
       </div>
       <div className="messages">

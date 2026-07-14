@@ -3,13 +3,16 @@ import { Client } from '@stomp/stompjs';
 import {
   Bot,
   Check,
+  ChevronDown,
   Copy,
   Download,
   FilePlus2,
-  Folder,
   FolderPlus,
   ImagePlus,
-  MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightOpen,
+  Settings,
   Upload,
   UserRound,
   Wifi,
@@ -171,6 +174,8 @@ export default function App() {
   const isLeadPear = leadUserId === user.id;
   const roleLabel = isLeadPear ? 'Lead Pear' : 'Junior Pear';
   const delegateCandidates = humanMembers.filter((member) => member.id !== user.id);
+  const visibleMembers = members.slice(0, 4);
+  const hiddenMemberCount = Math.max(0, members.length - visibleMembers.length);
 
   const editorRef = useRef<unknown>(null);
   const monacoRef = useRef<any>(null);
@@ -689,17 +694,22 @@ export default function App() {
           <span>PearProgramming</span>
         </button>
         <div className="room-header-center">
-          <button className="room-code-chip" onClick={copyRoomCode} title="Copy room code" type="button">
-            <span>Room Code: {room.code}</span>
-            <Copy size={13} />
-          </button>
+          <div className="room-code-control" aria-label={`Room code ${room.code}`}>
+            <span className="room-code-label">Room Code:</span>
+            <strong>{room.code}</strong>
+            <button className="room-code-copy" onClick={copyRoomCode} title="Copy room code" type="button">
+              <Copy size={13} />
+              <span>Copy</span>
+            </button>
+          </div>
           <span className={`role-chip ${isLeadPear ? 'role-lead' : ''}`}>{roleLabel}</span>
         </div>
         <div className="topbar-actions">
           <div className="collaborators" aria-label="Collaborators">
             <span className="online-dot" />
             <span className="online-count">{Math.max(1, humanMembers.length)} online</span>
-            {members.map((member) => member.id === user.id ? (
+            <div className="avatar-stack">
+              {visibleMembers.map((member) => member.id === user.id ? (
               <button
                 className="avatar avatar-button"
                 key={member.id}
@@ -719,8 +729,13 @@ export default function App() {
               >
                 {member.ai ? <Bot size={13} /> : member.avatarUrl ? <img alt="" src={member.avatarUrl} /> : initials(member.name)}
               </span>
-            ))}
+              ))}
+              {hiddenMemberCount > 0 && <span className="avatar avatar-overflow" title={`${hiddenMemberCount} more collaborators`}>+{hiddenMemberCount}</span>}
+            </div>
           </div>
+          <button aria-label="Profile settings" className="topbar-icon-button" onClick={() => openProfileEditor(user)} title="Profile settings" type="button">
+            <Settings size={16} />
+          </button>
           <div className="pear-menu">
             <button
               aria-expanded={pearMenuOpen}
@@ -729,6 +744,7 @@ export default function App() {
               type="button"
             >
               <span>Pear Menu</span>
+              <ChevronDown size={14} />
             </button>
             {pearMenuOpen && (
               <div className="pear-menu-popover">
@@ -752,7 +768,7 @@ export default function App() {
 
       <section className={workspaceClass}>
         {explorerOpen ? (
-        <aside className="explorer">
+        <aside className="explorer" id="workspace-explorer">
           <div className="pane-title-row">
             <span className="pane-title">Explorer</span>
             <div className="icon-row">
@@ -765,8 +781,8 @@ export default function App() {
               <button className="icon-button" disabled={files.length === 0} onClick={exportWorkspace} type="button" title="Download project">
                 <Download size={15} />
               </button>
-              <button className="icon-button panel-minimize-button" onClick={() => setExplorerOpen(false)} type="button" title="Minimize explorer">
-                -
+              <button aria-label="Hide explorer" className="icon-button panel-minimize-button" onClick={() => setExplorerOpen(false)} type="button" title="Hide explorer">
+                <PanelLeftClose size={16} />
               </button>
             </div>
           </div>
@@ -807,8 +823,8 @@ export default function App() {
         </aside>
         ) : (
           <aside className="explorer-rail">
-            <button className="chat-rail-button" onClick={() => setExplorerOpen(true)} title="Show explorer" type="button">
-              <Folder size={17} />
+            <button aria-controls="workspace-explorer" aria-expanded="false" aria-label="Show explorer" className="panel-rail-button" onClick={() => setExplorerOpen(true)} title="Show explorer" type="button">
+              <PanelLeftOpen size={18} />
             </button>
           </aside>
         )}
@@ -913,8 +929,8 @@ export default function App() {
           />
         ) : (
           <aside className="chat-rail">
-            <button className="chat-rail-button" onClick={() => setChatOpen(true)} title="Show chat" type="button">
-              <MessageSquare size={17} />
+            <button aria-controls="room-chat" aria-expanded="false" aria-label="Show room chat" className="panel-rail-button" onClick={() => setChatOpen(true)} title="Show room chat" type="button">
+              <PanelRightOpen size={18} />
             </button>
           </aside>
         )}
@@ -1282,7 +1298,9 @@ export default function App() {
   function copyRoomCode() {
     const currentRoom = roomRef.current;
     if (currentRoom) {
-      void navigator.clipboard.writeText(currentRoom.code);
+      void navigator.clipboard.writeText(currentRoom.code)
+        .then(() => showToast('Room code copied'))
+        .catch(() => showToast(`Room code: ${currentRoom.code}`));
     }
   }
 
