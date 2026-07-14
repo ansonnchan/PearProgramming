@@ -16,6 +16,7 @@ const INTERNAL_SERVICE_TOKEN = process.env.INTERNAL_SERVICE_TOKEN || '';
 const SNAPSHOT_INTERVAL_MS = numberFromEnv('SNAPSHOT_INTERVAL_MS', 30_000);
 const ROOM_TTL_SECONDS = numberFromEnv('ROOM_TTL_SECONDS', 24 * 60 * 60);
 const ROOM_CLEANUP_GRACE_MS = numberFromEnv('ROOM_CLEANUP_GRACE_MS', 120_000);
+const REQUIRE_REDIS = booleanFromEnv('REQUIRE_REDIS', false);
 const REDIS_KEY_PREFIX = normalizeRedisKeyPrefix(process.env.PEARPROGRAM_REDIS_KEY_PREFIX || process.env.REDIS_KEY_PREFIX || 'pearprogram');
 const REDIS_CONFIG = redisConfigFromEnv();
 const INSTANCE_ID = randomInstanceId();
@@ -31,6 +32,7 @@ let redisAvailable = false;
 let redisPubSubAvailable = false;
 let redis = null;
 let redisSubscriber = null;
+let shuttingDown = false;
 
 log('info', 'Realtime configuration loaded', {
   envFiles: loadedEnvFiles,
@@ -104,15 +106,26 @@ if (REDIS_CONFIG.enabled) {
 }
 
 const server = http.createServer(async (req, res) => {
-  if (req.url === '/health') {
+  if (req.url === '/health' || req.url === '/healthz') {
     json(res, 200, {
-      status: 'ok',
+      status: shuttingDown ? 'stopping' : 'ok',
       redisAvailable,
       redisPubSubAvailable,
       redisMode: REDIS_CONFIG.mode,
       redisKeyPrefix: REDIS_KEY_PREFIX,
       activeDocs: docs.size,
       activeRooms: roomSockets.size
+    });
+    return;
+  }
+
+  if (req.url === '/readyz') {
+    const ready = !shuttingDown && (!REQUIRE_REDIS || (redisAvailable && redisPubSubAvailable));
+    json(res, ready ? 200 : 503, {
+      status: ready ? 'ready' : 'not_ready',
+      redisRequired: REQUIRE_REDIS,
+      redisAvailable,
+      redisPubSubAvailable
     });
     return;
   }
@@ -175,6 +188,65 @@ setInterval(() => {
 server.listen(PORT, () => {
   log('info', 'PearProgram y-websocket service listening', { port: PORT });
 });
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
+
+async function shutdown(signal) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  log('info', 'Realtime shutdown started', { signal, activeDocs: docs.size, activeRooms: roomSockets.size });
+
+  const forceExit = setTimeout(() => {
+    log('error', 'Realtime shutdown deadline exceeded', { signal });
+    process.exit(1);
+  }, 10_000);
+
+  for (const timer of roomCleanupTimers.values()) {
+    clearTimeout(timer);
+  }
+  roomCleanupTimers.clear();
+  for (const client of wss.clients) {
+    client.close(1012, 'Service restarting');
+  }
+
+  try {
+    await withTimeout(flushSnapshots(), 5_000, 'snapshot flush');
+  } catch (error) {
+    log('warn', 'Final snapshot flush did not complete', { error: error.message });
+  }
+
+  await Promise.allSettled([
+    closeHttpServer(),
+    closeRedisClient(redisSubscriber),
+    closeRedisClient(redis)
+  ]);
+
+  clearTimeout(forceExit);
+  log('info', 'Realtime shutdown completed', { signal });
+  process.exit(0);
+}
+
+function closeHttpServer() {
+  return new Promise((resolve) => server.close(resolve));
+}
+
+async function closeRedisClient(client) {
+  if (!client) {
+    return;
+  }
+  await withTimeout(client.quit(), 2_000, 'Redis disconnect').catch(() => client.disconnect());
+}
+
+function withTimeout(promise, milliseconds, operation) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${operation} timed out`)), milliseconds);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 function parseDocRequest(req) {
   const url = new URL(req.url, 'http://localhost');
@@ -668,6 +740,14 @@ function deriveRoomCleanupEndpoint(snapshotEndpoint) {
 function numberFromEnv(name, fallback) {
   const parsed = Number.parseInt(process.env[name] || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function booleanFromEnv(name, fallback) {
+  const value = process.env[name];
+  if (value === undefined) {
+    return fallback;
+  }
+  return value.toLowerCase() === 'true';
 }
 
 function sanitizeUrl(value) {

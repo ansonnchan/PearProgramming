@@ -22,6 +22,8 @@ spring:
   flyway:
     enabled: true
     validate-migration-naming: true
+  lifecycle:
+    timeout-per-shutdown-phase: ${SPRING_SHUTDOWN_TIMEOUT:20s}
   data:
     redis:
       repositories:
@@ -40,6 +42,8 @@ spring:
           max-wait: ${SPRING_REDIS_POOL_MAX_WAIT:5s}
 server:
   port: ${PORT:${SERVER_PORT:8081}}
+  forward-headers-strategy: framework
+  shutdown: graceful
   servlet:
     session:
       timeout: ${AUTH_SESSION_TIMEOUT:12h}
