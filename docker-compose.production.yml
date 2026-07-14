@@ -1,0 +1,185 @@
+name: pearprogram
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pearprogram}
+      POSTGRES_USER: ${POSTGRES_USER:-pearprogram}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - private
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.production}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.production}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - private
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      PORT: 8081
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-pearprogram}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-pearprogram}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+      SPRING_DATASOURCE_MAX_POOL_SIZE: ${SPRING_DATASOURCE_MAX_POOL_SIZE:-10}
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.production}
+      SPRING_REDIS_TIMEOUT: 10s
+      SPRING_REDIS_HEALTH_ENABLED: "false"
+      PEARPROGRAM_REDIS_KEY_PREFIX: pearprogram
+      PEARPROGRAM_REALTIME_REDIS_BROADCAST_ENABLED: "true"
+      PEARPROGRAM_CORS_ALLOWED_ORIGINS: ${PUBLIC_APP_ORIGIN:?Set PUBLIC_APP_ORIGIN in .env.production}
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_COOKIE_SAME_SITE: lax
+      AUTH_SESSION_TIMEOUT: ${AUTH_SESSION_TIMEOUT:-12h}
+      AUTH_REALTIME_TOKEN_TTL: ${AUTH_REALTIME_TOKEN_TTL:-10m}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env.production}
+      JUDGE0_BASE_URL: ${JUDGE0_BASE_URL:?Set JUDGE0_BASE_URL in .env.production}
+      JUDGE0_API_KEY: ${JUDGE0_API_KEY:-}
+      JUDGE0_API_HOST: ${JUDGE0_API_HOST:-}
+      JUDGE0_REQUEST_TIMEOUT: ${JUDGE0_REQUEST_TIMEOUT:-5s}
+      JUDGE0_EXECUTION_TIMEOUT_SECONDS: ${JUDGE0_EXECUTION_TIMEOUT_SECONDS:-5}
+      JUDGE0_EXECUTION_DEADLINE: ${JUDGE0_EXECUTION_DEADLINE:-20s}
+      EXECUTION_WORKER_THREADS: ${EXECUTION_WORKER_THREADS:-4}
+      EXECUTION_RATE_LIMIT_PER_MINUTE: ${EXECUTION_RATE_LIMIT_PER_MINUTE:-10}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_BASE_URL: ${GROQ_BASE_URL:-https://api.groq.com/openai/v1}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8081/healthz"]
+      interval: 15s
+      timeout: 5s
+      start_period: 45s
+      retries: 4
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - private
+
+  realtime:
+    build:
+      context: ./realtime
+    restart: unless-stopped
+    environment:
+      PORT: 1235
+      REQUIRE_REDIS: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.production}
+      REDIS_KEY_PREFIX: pearprogram
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env.production}
+      AUTH_VALIDATION_ENDPOINT: http://backend:8081/internal/auth/realtime/validate
+      SNAPSHOT_ENDPOINT: http://backend:8081/internal/files
+      ROOM_CLEANUP_ENDPOINT: http://backend:8081/internal/rooms
+      SNAPSHOT_INTERVAL_MS: 30000
+      ROOM_CLEANUP_GRACE_MS: 120000
+      ROOM_TTL_SECONDS: 86400
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:1235/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 4
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - private
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${PUBLIC_APP_ORIGIN:?Set PUBLIC_APP_ORIGIN in .env.production}
+        VITE_STOMP_URL: ${PUBLIC_APP_ORIGIN:?Set PUBLIC_APP_ORIGIN in .env.production}/ws
+        VITE_YJS_URL: ${PUBLIC_APP_ORIGIN:?Set PUBLIC_APP_ORIGIN in .env.production}/yjs
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      realtime:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - private
+
+  gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_APP_HOST: ${PUBLIC_APP_HOST:?Set PUBLIC_APP_HOST in .env.production}
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:?Set CADDY_ACME_EMAIL in .env.production}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      realtime:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - private
+
+networks:
+  private:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:
