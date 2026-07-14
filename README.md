@@ -182,6 +182,7 @@ The Run toolbar captures the current Monaco model, which is the model bound to t
 Monaco/Yjs editor
   -> Spring room execution API
   -> execution service and policy checks
+  -> Redis ready queue and leased worker claim
   -> Judge0 provider adapter
   -> isolated Judge0 worker
   -> normalized execution result
@@ -209,14 +210,22 @@ Content-Type: application/json
 }
 ```
 
-The API responds with HTTP `202` and an execution ID in `QUEUED` or `SUBMITTED` state. Retrieve it with:
+The API responds with HTTP `202` and an execution ID in `QUEUED`, `CLAIMED`, or `SUBMITTED` state. Retrieve it with:
 
 ```http
 GET /api/rooms/{code}/executions/{executionId}
 Cookie: JSESSIONID=<server-issued session>
 ```
 
-States are `QUEUED`, `SUBMITTED`, `RUNNING`, `COMPLETED`, `COMPILATION_ERROR`, `RUNTIME_ERROR`, `TIMED_OUT`, and `FAILED`. A terminal execution never transitions back to a running state.
+States are `QUEUED`, `CLAIMED`, `SUBMITTED`, `RUNNING`, `COMPLETED`, `COMPILATION_ERROR`, `RUNTIME_ERROR`, `TIMED_OUT`, `FAILED`, and `CANCELLED`. A terminal execution never transitions back to a running state.
+
+### Redis execution coordination
+
+Redis is required for code execution. It provides a shared delayed queue, execution ownership and status, atomic idempotency, rate windows, fixed deadlines, provider-token correlation, and expiring worker leases. This allows multiple backend instances to claim work without running the same queued job concurrently.
+
+Workers persist the Judge0 submission token before polling. If a backend exits after submission, the lease expires and another worker resumes polling that token instead of submitting the source again. Expired leases are requeued with bounded retry counts; exhausted jobs become terminal failures. Terminal processing removes the short-lived job hash—including source and stdin—while the normalized requester-owned result remains for `EXECUTION_RECORD_TTL`.
+
+The queue uses Redis sorted sets rather than Redis Streams because jobs need both delayed exponential-backoff scheduling and a separate lease deadline. Atomic Lua operations protect submission, claim, transition, reschedule, acknowledgement, and recovery. Queue and lease members whose job TTL has expired are discarded when workers encounter them.
 
 ### Supported languages
 
@@ -247,16 +256,21 @@ Judge0 IDs are centralized in `ExecutionLanguageRegistry`; clients submit langua
 | `EXECUTION_RATE_LIMIT_PER_MINUTE` | `10` | Per-user, per-room submission limit |
 | `EXECUTION_RECORD_TTL` | `15m` | Result/idempotency retention |
 | `EXECUTION_WORKER_THREADS` | `4` | Bounded local polling worker count |
+| `EXECUTION_WORKER_POLL_INTERVAL` | `200ms` | Delay between shared queue claim scans |
+| `EXECUTION_WORKER_LEASE` | `30s` | Claim lease before another worker may recover a job |
+| `EXECUTION_WORKER_MAX_RETRIES` | `3` | Shared worker/provider retry limit |
+| `EXECUTION_WORKER_RETRY_BACKOFF` | `1s` | Initial worker retry delay, exponentially bounded |
+| `EXECUTION_WORKER_RECOVERY_INTERVAL` | `5s` | Expired-lease recovery scan interval |
 
 ### Security model and limitations
 
 - User code never executes in Spring, Node, the frontend, or the Pear Programming containers. Judge0 is the isolation boundary and must be independently secured, patched, resource-limited, and kept off unrestricted internal networks.
-- The server enforces language, source/stdin size, deadline, polling, retry, queue, rate, membership, ownership, and idempotency checks. Stored execution records do not contain source or stdin and expire automatically.
+- The server enforces language, source/stdin size, deadline, polling, retry, queue, rate, membership, ownership, and idempotency checks. Source and stdin exist only in the expiring Redis job until terminal acknowledgement; normalized records do not contain them and also expire automatically.
 - Provider credentials and raw provider failures never enter frontend contracts or room events. Console output is rendered as React text, not HTML.
 - Identity is server-issued and consistent across REST, STOMP/SockJS, and Yjs. This phase deliberately implements guest sessions, not password accounts or OAuth; anyone can create a new guest, and there is not yet account recovery, email verification, durable account storage, or an invitation model.
 - HTTP sessions and opaque Yjs access tokens are process-local. Multi-instance backend deployment therefore requires sticky sessions until Phase 2/4 moves session/token state to a shared store or replaces the token with an appropriately signed credential.
 - When `INTERNAL_SERVICE_TOKEN` is blank, `/internal/**` accepts only direct loopback traffic for convenient local development. Container or hosted deployments must configure the same secret on Spring and Node; do not expose internal routes directly at an ingress.
-- Execution records and rate windows are process-local. This matches the current single-backend development/deployment model. A multi-instance deployment should move execution metadata/idempotency/rate state to Redis or a database and use a shared job queue.
+- Code execution fails closed with HTTP `503` when Redis coordination is unavailable. Collaborative editing can continue, but Run cannot safely enqueue shared work until Redis recovers.
 - Judge0 language IDs can differ across customized deployments. The included mapping targets standard Judge0 CE IDs for the five supported languages; update the centralized registry if the provider’s language catalog differs.
 
 ### Testing execution
