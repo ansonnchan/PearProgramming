@@ -75,6 +75,11 @@ pearprogram:
     deadline: ${JUDGE0_EXECUTION_DEADLINE:20s}
     max-poll-attempts: ${JUDGE0_MAX_POLL_ATTEMPTS:25}
     worker-threads: ${EXECUTION_WORKER_THREADS:4}
+    worker-poll-interval: ${EXECUTION_WORKER_POLL_INTERVAL:200ms}
+    worker-lease: ${EXECUTION_WORKER_LEASE:30s}
+    worker-max-retries: ${EXECUTION_WORKER_MAX_RETRIES:3}
+    worker-retry-backoff: ${EXECUTION_WORKER_RETRY_BACKOFF:1s}
+    worker-recovery-interval: ${EXECUTION_WORKER_RECOVERY_INTERVAL:5s}
     judge0:
       base-url: ${JUDGE0_BASE_URL:http://localhost:2358}
       api-key: ${JUDGE0_API_KEY:}

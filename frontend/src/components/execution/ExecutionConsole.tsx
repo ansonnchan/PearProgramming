@@ -40,8 +40,8 @@ export function ExecutionConsole({ error, onClear, onStdinChange, result, stdin,
           {result?.stdout && <section className="output-block output-stdout"><strong>Standard output</strong><pre>{result.stdout}</pre></section>}
           {result?.stderr && <section className="output-block output-error"><strong>{result.status === 'RUNTIME_ERROR' ? 'Runtime error' : 'Standard error'}</strong><pre>{result.stderr}</pre></section>}
           {result?.message && (
-            <section className={`output-block ${result.status === 'TIMED_OUT' || result.status === 'FAILED' ? 'output-system' : ''}`}>
-              <strong>{result.status === 'TIMED_OUT' ? 'Timed out' : result.status === 'FAILED' ? 'System failure' : 'Execution status'}</strong>
+            <section className={`output-block ${result.status === 'TIMED_OUT' || result.status === 'FAILED' || result.status === 'CANCELLED' ? 'output-system' : ''}`}>
+              <strong>{result.status === 'TIMED_OUT' ? 'Timed out' : result.status === 'FAILED' ? 'System failure' : result.status === 'CANCELLED' ? 'Cancelled' : 'Execution status'}</strong>
               <pre>{result.message}</pre>
             </section>
           )}

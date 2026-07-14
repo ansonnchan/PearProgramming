@@ -141,13 +141,15 @@ export type RoomSessionState = {
 
 export type ExecutionStatus =
   | 'QUEUED'
+  | 'CLAIMED'
   | 'SUBMITTED'
   | 'RUNNING'
   | 'COMPLETED'
   | 'COMPILATION_ERROR'
   | 'RUNTIME_ERROR'
   | 'TIMED_OUT'
-  | 'FAILED';
+  | 'FAILED'
+  | 'CANCELLED';
 
 export type ExecutionResult = {
   executionId: string;

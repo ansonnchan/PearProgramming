@@ -5,7 +5,8 @@ const TERMINAL_STATUSES = new Set<ExecutionStatus>([
   'COMPILATION_ERROR',
   'RUNTIME_ERROR',
   'TIMED_OUT',
-  'FAILED'
+  'FAILED',
+  'CANCELLED'
 ]);
 
 export function isTerminalExecution(status: ExecutionStatus) {

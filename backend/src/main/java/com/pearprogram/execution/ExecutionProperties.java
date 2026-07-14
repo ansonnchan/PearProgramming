@@ -16,6 +16,10 @@ public class ExecutionProperties {
     private Duration deadline = Duration.ofSeconds(20);
     private int maxPollAttempts = 25;
     private int workerThreads = 4;
+    private Duration workerPollInterval = Duration.ofMillis(200);
+    private Duration workerLease = Duration.ofSeconds(30);
+    private int workerMaxRetries = 3;
+    private Duration workerRetryBackoff = Duration.ofSeconds(1);
     private final Judge0 judge0 = new Judge0();
 
     public int getMaxSourceBytes() { return maxSourceBytes; }
@@ -34,6 +38,14 @@ public class ExecutionProperties {
     public void setMaxPollAttempts(int value) { this.maxPollAttempts = value; }
     public int getWorkerThreads() { return workerThreads; }
     public void setWorkerThreads(int value) { this.workerThreads = value; }
+    public Duration getWorkerPollInterval() { return workerPollInterval; }
+    public void setWorkerPollInterval(Duration value) { this.workerPollInterval = value; }
+    public Duration getWorkerLease() { return workerLease; }
+    public void setWorkerLease(Duration value) { this.workerLease = value; }
+    public int getWorkerMaxRetries() { return workerMaxRetries; }
+    public void setWorkerMaxRetries(int value) { this.workerMaxRetries = value; }
+    public Duration getWorkerRetryBackoff() { return workerRetryBackoff; }
+    public void setWorkerRetryBackoff(Duration value) { this.workerRetryBackoff = value; }
     public Judge0 getJudge0() { return judge0; }
 
     public static class Judge0 {
