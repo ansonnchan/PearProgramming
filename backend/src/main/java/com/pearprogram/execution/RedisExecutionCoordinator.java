@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 class RedisExecutionCoordinator implements ExecutionCoordinator {
@@ -159,6 +160,7 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
 
     private final StringRedisTemplate redis;
     private final String prefix;
+    private final AtomicLong nextBackgroundWarningAt = new AtomicLong();
 
     RedisExecutionCoordinator(StringRedisTemplate redis, @Value("${pearprogram.redis.key-prefix:pearprogram}") String prefix) {
         this.redis = redis;
@@ -216,7 +218,7 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
             Map<Object, Object> values = redis.opsForHash().entries(jobKey(executionId));
             return values.isEmpty() ? Optional.empty() : Optional.of(toJob(values));
         } catch (DataAccessException | IllegalArgumentException exception) {
-            log.warn("Execution worker could not claim Redis work. reason={}", rootMessage(exception));
+            warnBackgroundUnavailable("claim", exception);
             return Optional.empty();
         }
     }
@@ -273,7 +275,7 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
             }
             return recovered;
         } catch (DataAccessException exception) {
-            log.warn("Execution lease recovery is waiting for Redis. reason={}", rootMessage(exception));
+            warnBackgroundUnavailable("lease-recovery", exception);
             return 0;
         }
     }
@@ -331,4 +333,12 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
         catch (NoSuchAlgorithmException exception) { throw new IllegalStateException(exception); }
     }
     private static String rootMessage(Throwable error) { Throwable root = error; while (root.getCause() != null) root = root.getCause(); return root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage(); }
+
+    private void warnBackgroundUnavailable(String operation, Throwable error) {
+        long now = System.currentTimeMillis();
+        long next = nextBackgroundWarningAt.get();
+        if (now >= next && nextBackgroundWarningAt.compareAndSet(next, now + 30_000)) {
+            log.warn("Redis execution background operation is waiting for connectivity. operation={} reason={}", operation, rootMessage(error));
+        }
+    }
 }
