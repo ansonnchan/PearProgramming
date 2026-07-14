@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -26,6 +27,7 @@ class ExecutionServiceTests {
     private ExecutionProperties properties;
     private FakeProvider provider;
     private ExecutionService service;
+    private TestExecutionCoordinator coordinator;
 
     @BeforeEach
     void setUp() {
@@ -34,9 +36,11 @@ class ExecutionServiceTests {
         properties.setDeadline(Duration.ofMillis(200));
         properties.setMaxPollAttempts(4);
         properties.setWorkerThreads(1);
+        properties.setWorkerRetryBackoff(Duration.ofMillis(1));
         properties.setRateLimitPerMinute(20);
         provider = new FakeProvider();
-        service = new ExecutionService(provider, new ExecutionLanguageRegistry(), properties, roomState);
+        coordinator = new TestExecutionCoordinator();
+        service = new ExecutionService(provider, new ExecutionLanguageRegistry(), properties, roomState, coordinator);
         roomState.roomExists = true;
         roomState.activeMember = true;
     }
@@ -54,7 +58,7 @@ class ExecutionServiceTests {
         ExecutionResponse submitted = submit("key-1", "python", "print('hello')", "");
         ExecutionResponse completed = awaitTerminal(submitted.executionId());
 
-        assertThat(submitted.status()).isIn(ExecutionStatus.QUEUED, ExecutionStatus.SUBMITTED);
+        assertThat(submitted.status()).isIn(ExecutionStatus.QUEUED, ExecutionStatus.CLAIMED, ExecutionStatus.SUBMITTED);
         assertThat(completed.status()).isEqualTo(ExecutionStatus.COMPLETED);
         assertThat(completed.stdout()).isEqualTo("hello\n");
         assertThat(completed.durationMs()).isEqualTo(42L);
@@ -151,6 +155,49 @@ class ExecutionServiceTests {
     }
 
     @Test
+    void fixedDeadlineTerminatesBeforeProviderSubmission() {
+        properties.setDeadline(Duration.ZERO);
+        ExecutionResponse completed = awaitTerminal(submit("deadline", "python", "print(1)", "").executionId());
+        assertThat(completed.status()).isEqualTo(ExecutionStatus.TIMED_OUT);
+        assertThat(provider.submissions).hasValue(0);
+    }
+
+    @Test
+    void deletedRoomCancelsClaimedExecution() {
+        ExecutionResponse submitted = submit("deleted-room", "python", "print(1)", "");
+        roomState.roomExists = false;
+        ExecutionResponse completed = awaitTerminal(submitted.executionId());
+        assertThat(completed.status()).isEqualTo(ExecutionStatus.CANCELLED);
+    }
+
+    @Test
+    void recoveredProviderTokenAvoidsDuplicateJudgeSubmission() {
+        service.shutdown();
+        coordinator = new TestExecutionCoordinator();
+        Instant now = Instant.now();
+        UUID id = UUID.randomUUID();
+        ExecutionJob job = new ExecutionJob(id, "ABC123", "user-1", 71, "print(1)", "", now, now.plusSeconds(10), 0, 3, "", "");
+        coordinator.create(job, "recovery", properties.getRecordTtl(), 10);
+        coordinator.claim("crashed", now, Duration.ZERO);
+        coordinator.saveProviderToken(id, "crashed", "existing-token", properties.getRecordTtl());
+        coordinator.recoverExpiredLeases(now.plusMillis(1), "failed", properties.getRecordTtl());
+        provider.results.add(new ProviderExecutionResult(ExecutionStatus.COMPLETED, "ok", null, null, 0, 1L, null));
+        service = new ExecutionService(provider, new ExecutionLanguageRegistry(), properties, roomState, coordinator);
+
+        ExecutionResponse completed = awaitTerminal(id);
+        assertThat(completed.status()).isEqualTo(ExecutionStatus.COMPLETED);
+        assertThat(provider.submissions).hasValue(0);
+        assertThat(provider.polls).hasValue(1);
+    }
+
+    @Test
+    void shutdownStopsClaimsWithoutDiscardingQueuedWork() {
+        service.shutdown();
+        assertThat(service.acceptingWork()).isFalse();
+        assertThat(service.activeWorkerCount()).isZero();
+    }
+
+    @Test
     void javaRequiresMainEntryClass() {
         assertThatThrownBy(() -> submit("java-main", "java", "class App {}", ""))
                 .isInstanceOfSatisfying(ExecutionApiException.class, exception -> {
@@ -171,6 +218,7 @@ class ExecutionServiceTests {
 
     private ExecutionResponse awaitTerminal(UUID id) {
         for (int attempt = 0; attempt < 100; attempt++) {
+            service.dispatch();
             ExecutionResponse response = service.get("ABC123", id, "user-1");
             if (response.status().isTerminal()) {
                 return response;
