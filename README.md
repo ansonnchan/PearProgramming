@@ -176,7 +176,7 @@ When the last user leaves a room, Spring schedules ephemeral presence cleanup af
 
 ## Sandboxed Code Execution
 
-The Run toolbar captures the current Monaco model, which is the model bound to the active Yjs collaborative document. The user chooses one of the allowlisted languages, can supply standard input, and sees status, stdout, stderr, compiler output, runtime errors, exit code, and duration in the integrated console.
+The Run toolbar captures the current Monaco model, which is the model bound to the active Yjs collaborative document. The user chooses one of the allowlisted languages, can supply standard input, and sees status, stdout, stderr, compiler output, runtime errors, exit code, and duration in the integrated console. Terminal states offer an explicit Run again action, while Clear output removes the saved console reference without clearing stdin.
 
 ```text
 Monaco/Yjs editor
@@ -190,7 +190,7 @@ Monaco/Yjs editor
   -> integrated console
 ```
 
-Execution results use requester-only HTTP polling instead of the existing room STOMP topics. Pear Programming’s current STOMP broker has shared room topics and no authenticated user destinations, so room broadcast would reveal private stdin/output to collaborators. Execution IDs and a frontend run sequence prevent an older result from replacing a newer run.
+Execution results use requester-only HTTP polling instead of the existing room STOMP topics. Pear Programming’s current STOMP broker has shared room topics and no authenticated user destinations, so room broadcast would reveal private stdin/output to collaborators. Execution IDs and a frontend run sequence prevent an older result from replacing a newer run. The browser saves only the latest room-and-file-scoped execution reference in session storage, never source or output, so refresh/reconnect can retrieve a retained backend result without leaking console state into another workspace.
 
 ### API
 
@@ -286,6 +286,7 @@ Frontend and realtime checks:
 
 ```bash
 cd frontend
+npm test
 npm run lint
 npm run build
 
@@ -293,7 +294,7 @@ cd ../realtime
 npm run lint
 ```
 
-The frontend currently has no JavaScript test runner; TypeScript checking and the production Vite build are the repository’s existing frontend verification conventions. Persistence integration tests use H2 in PostgreSQL compatibility mode so automated tests do not require public infrastructure; final local verification also applies Flyway to the Compose PostgreSQL service.
+Frontend reliability tests use Vitest and Testing Library with mocked execution APIs; they do not require Redis or Judge0. Persistence integration tests use H2 in PostgreSQL compatibility mode so automated tests do not require public infrastructure; final local verification also applies Flyway to the Compose PostgreSQL service.
 
 ## Current Room UX
 
