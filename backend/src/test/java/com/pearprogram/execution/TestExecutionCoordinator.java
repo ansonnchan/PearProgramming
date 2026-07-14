@@ -58,6 +58,7 @@ final class TestExecutionCoordinator implements ExecutionCoordinator {
         available.remove(id);
         ExecutionJob job = jobs.get(id);
         if (job == null) return Optional.empty();
+        if (records.get(id).terminal()) { jobs.remove(id); return Optional.empty(); }
         ExecutionJob claimed = copy(job, job.retryCount(), job.providerToken(), worker);
         jobs.put(id, claimed); leases.put(id, now.plus(lease));
         if (records.get(id).status == ExecutionStatus.QUEUED) records.get(id).transition(ExecutionStatus.CLAIMED);
@@ -100,6 +101,7 @@ final class TestExecutionCoordinator implements ExecutionCoordinator {
         ExecutionJob job = jobs.get(id);
         if (job == null || !worker.equals(job.leaseOwner())) return ExecutionRescheduleResult.LEASE_LOST;
         leases.remove(id);
+        if (records.get(id).terminal()) { jobs.remove(id); available.remove(id); return ExecutionRescheduleResult.RETRIES_EXHAUSTED; }
         int retries = job.retryCount() + 1;
         if (retries > job.maxRetries()) {
             fail(id, ExecutionStatus.FAILED, message, 0, ttl); jobs.remove(id); return ExecutionRescheduleResult.RETRIES_EXHAUSTED;

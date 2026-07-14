@@ -80,6 +80,21 @@ class ExecutionCoordinatorTests {
         assertThat(coordinator.find(job.executionId())).isEmpty();
     }
 
+    @Test
+    void recoveryDeletesOrphanedJobWithoutReopeningTerminalState() {
+        TestExecutionCoordinator coordinator = new TestExecutionCoordinator();
+        ExecutionJob job = job(3);
+        Instant now = Instant.now();
+        coordinator.create(job, "key", ttl, 10);
+        coordinator.claim("worker-a", now.plusSeconds(1), Duration.ZERO);
+        coordinator.fail(job.executionId(), ExecutionStatus.COMPLETED, "done", 1, ttl);
+
+        coordinator.recoverExpiredLeases(now.plusSeconds(2), "recovery", ttl);
+        assertThat(coordinator.find(job.executionId()).orElseThrow().response().status()).isEqualTo(ExecutionStatus.COMPLETED);
+        assertThat(coordinator.hasJob(job.executionId())).isFalse();
+        assertThat(coordinator.queueDepth()).isZero();
+    }
+
     private ExecutionJob job(int retries) {
         Instant now = Instant.now();
         return new ExecutionJob(UUID.randomUUID(), "ABC123", "user-1", 71, "print(1)", "", now,

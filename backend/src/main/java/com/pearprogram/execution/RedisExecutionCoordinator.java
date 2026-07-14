@@ -60,6 +60,11 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
             if redis.call('EXISTS', KEYS[3]) == 0 or redis.call('EXISTS', KEYS[4]) == 0 then
               redis.call('ZREM', KEYS[1], ARGV[1]); redis.call('DEL', KEYS[3]); return nil
             end
+            local existingStatus = redis.call('HGET', KEYS[4], 'status')
+            if existingStatus == 'COMPLETED' or existingStatus == 'COMPILATION_ERROR' or existingStatus == 'RUNTIME_ERROR'
+              or existingStatus == 'TIMED_OUT' or existingStatus == 'FAILED' or existingStatus == 'CANCELLED' then
+              redis.call('ZREM', KEYS[1], ARGV[1]); redis.call('DEL', KEYS[3]); return nil
+            end
             if redis.call('ZREM', KEYS[1], ARGV[1]) == 0 then return nil end
             redis.call('HSET', KEYS[3], 'leaseOwner', ARGV[3])
             redis.call('ZADD', KEYS[2], ARGV[4], ARGV[1])
@@ -108,6 +113,11 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
     private static final DefaultRedisScript<Long> RESCHEDULE = script("""
             if redis.call('HGET', KEYS[3], 'leaseOwner') ~= ARGV[2] then return 0 end
             redis.call('ZREM', KEYS[2], ARGV[1])
+            local current = redis.call('HGET', KEYS[4], 'status')
+            if current == 'COMPLETED' or current == 'COMPILATION_ERROR' or current == 'RUNTIME_ERROR'
+              or current == 'TIMED_OUT' or current == 'FAILED' or current == 'CANCELLED' then
+              redis.call('DEL', KEYS[3]); return 2
+            end
             local retries = redis.call('HINCRBY', KEYS[3], 'retryCount', 1)
             local maxRetries = tonumber(redis.call('HGET', KEYS[3], 'maxRetries') or '0')
             if retries > maxRetries then
@@ -139,6 +149,11 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
             if score == false or tonumber(score) > tonumber(ARGV[2]) then return 0 end
             redis.call('ZREM', KEYS[2], ARGV[1])
             if redis.call('EXISTS', KEYS[3]) == 0 then return 0 end
+            local current = redis.call('HGET', KEYS[4], 'status')
+            if current == 'COMPLETED' or current == 'COMPILATION_ERROR' or current == 'RUNTIME_ERROR'
+              or current == 'TIMED_OUT' or current == 'FAILED' or current == 'CANCELLED' then
+              redis.call('DEL', KEYS[3]); return 2
+            end
             local retries = redis.call('HINCRBY', KEYS[3], 'retryCount', 1)
             local maxRetries = tonumber(redis.call('HGET', KEYS[3], 'maxRetries') or '0')
             if retries > maxRetries then
