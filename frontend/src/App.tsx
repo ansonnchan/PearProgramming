@@ -10,8 +10,6 @@ import {
   FolderPlus,
   ImagePlus,
   MessageSquare,
-  Play,
-  SquareTerminal,
   Upload,
   UserRound,
   Wifi,
@@ -38,9 +36,11 @@ import {
   uploadWorkspaceFiles,
   YJS_URL
 } from './api';
-import { EXECUTION_LANGUAGES, executionLanguageForEditorLanguage, inferLanguage, languageClass, type ExecutionLanguage } from './language';
+import { executionLanguageForEditorLanguage, inferLanguage, languageClass, type ExecutionLanguage } from './language';
 import { useExecution } from './execution/useExecution';
+import { createExecutionInput } from './execution/input';
 import { ExecutionConsole } from './components/execution/ExecutionConsole';
+import { ExecutionToolbar } from './components/execution/ExecutionToolbar';
 import { useAuthSession } from './auth/useAuthSession';
 import { useRoomConnection } from './collaboration/useRoomConnection';
 import { useCollaborativeDocument } from './collaboration/useCollaborativeDocument';
@@ -207,7 +207,7 @@ export default function App() {
     result: executionResult,
     run: submitActiveExecution,
     submitting: executionSubmitting
-  } = useExecution(activeFile?.id ?? null);
+  } = useExecution(room && activeFile ? `${room.code}:${activeFile.id}` : null, room?.code ?? null);
 
   const handleJoinRoom = useCallback(async (rawCode: string, displayName?: string, replaceUrl = true) => {
     const code = normalizeRoomCode(rawCode);
@@ -827,31 +827,15 @@ export default function App() {
               </div>
             ))}
           </div>
-          <div className="execution-toolbar">
-            <button
-              className="run-button"
-              disabled={!activeFile || executionSubmitting}
-              onClick={() => void runActiveFile()}
-              title={activeFile ? 'Run the current collaborative document' : 'Open a file to run code'}
-              type="button"
-            >
-              <Play size={14} />
-              {executionSubmitting ? 'Submitting…' : 'Run'}
-            </button>
-            <label className="execution-language-label">
-              <span>Language</span>
-              <select onChange={(event) => setExecutionLanguage(event.target.value as ExecutionLanguage)} value={executionLanguage}>
-                {EXECUTION_LANGUAGES.map((language) => (
-                  <option key={language.id} value={language.id}>{language.label}</option>
-                ))}
-              </select>
-            </label>
-            {executionLanguage === 'java' && <span className="java-main-hint">Java entry class: Main</span>}
-            <button className="console-toggle" onClick={() => setExecutionPanelOpen((current) => !current)} type="button">
-              <SquareTerminal size={14} />
-              {executionPanelOpen ? 'Hide console' : 'Show console'}
-            </button>
-          </div>
+          <ExecutionToolbar
+            activeFile={Boolean(activeFile)}
+            consoleOpen={executionPanelOpen}
+            language={executionLanguage}
+            onLanguageChange={setExecutionLanguage}
+            onRun={() => void runActiveFile()}
+            onToggleConsole={() => setExecutionPanelOpen((current) => !current)}
+            submitting={executionSubmitting}
+          />
           <div className="editor-frame">
             {activeFile ? (
               <Editor
@@ -896,6 +880,7 @@ export default function App() {
             <ExecutionConsole
               error={executionError}
               onClear={clearExecutionConsole}
+              onRerun={() => void runActiveFile()}
               onStdinChange={setExecutionStdin}
               result={executionResult}
               stdin={executionStdin}
@@ -1220,15 +1205,14 @@ export default function App() {
       return;
     }
 
-    const editor = editorRef.current as { getValue?: () => string } | null;
-    const sourceCode = editor?.getValue?.() ?? currentFile.content;
     setExecutionPanelOpen(true);
-    await submitActiveExecution({
+    await submitActiveExecution(createExecutionInput({
+      editor: editorRef.current as { getValue?: () => string } | null,
+      fallbackSourceCode: currentFile.content,
       roomCode: currentRoom.code,
       language: executionLanguage,
-      sourceCode,
       stdin: executionStdin
-    });
+    }));
   }
 
   function updateMentionState(input: HTMLInputElement) {

@@ -916,7 +916,8 @@ button:disabled {
 
 .run-button,
 .console-toggle,
-.clear-console-button {
+.clear-console-button,
+.rerun-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -979,7 +980,8 @@ button:disabled {
 }
 
 .console-toggle:hover,
-.clear-console-button:hover:not(:disabled) {
+.clear-console-button:hover:not(:disabled),
+.rerun-button:hover:not(:disabled) {
   background: #30363d;
 }
 
@@ -1113,12 +1115,14 @@ button:disabled {
 .execution-status-compilation_error,
 .execution-status-runtime_error,
 .execution-status-timed_out,
-.execution-status-failed {
+.execution-status-failed,
+.execution-status-cancelled {
   background: #7d3028;
   color: #ffdcd7;
 }
 
 .execution-status-queued,
+.execution-status-claimed,
 .execution-status-submitted,
 .execution-status-running {
   background: #27496d;
@@ -1131,11 +1135,22 @@ button:disabled {
   font-size: 10px;
 }
 
-.clear-console-button {
+.execution-console-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.clear-console-button,
+.rerun-button {
   height: 24px;
   border: 1px solid #30363d;
   background: transparent;
   color: #8b949e;
+}
+
+.rerun-button {
+  color: #d7f8df;
 }
 
 .execution-console-body {
@@ -1226,6 +1241,19 @@ button:disabled {
 }
 
 .output-system pre {
+  color: #f2cc60;
+}
+
+.execution-fallback-error,
+.execution-fallback-system {
+  margin: 0 0 7px;
+}
+
+.execution-fallback-error {
+  color: #ffb4a8;
+}
+
+.execution-fallback-system {
   color: #f2cc60;
 }
 
