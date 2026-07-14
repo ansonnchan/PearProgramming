@@ -1235,7 +1235,7 @@ button:disabled {
 
 .editor-area {
   display: grid;
-  grid-template-rows: 38px 44px minmax(0, 1fr) auto;
+  grid-template-rows: 48px 38px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -1249,9 +1249,9 @@ button:disabled {
 .execution-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
-  padding: 0 14px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--color-editor-border);
   background: var(--color-editor-raised);
   color: #c9d1d9;
@@ -1265,21 +1265,29 @@ button:disabled {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 27px;
-  padding: 0 10px;
-  border-radius: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
   font-size: 12px;
   font-weight: 800;
 }
 
 .run-button {
-  border: 1px solid #2ea043;
-  background: #238636;
+  min-width: 84px;
+  border: 1px solid #5d8c43;
+  background: linear-gradient(180deg, #4f7d39, #315f2e);
   color: #fff;
+  box-shadow: 0 5px 14px rgb(35 80 42 / 24%);
+  transition: filter var(--transition-fast), transform var(--transition-fast);
 }
 
 .run-button:hover:not(:disabled) {
-  background: #2ea043;
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.run-button:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .execution-language-label {
@@ -1292,10 +1300,11 @@ button:disabled {
 }
 
 .execution-language-label select {
-  height: 27px;
-  padding: 0 26px 0 8px;
-  border: 1px solid #30363d;
-  border-radius: 6px;
+  height: 32px;
+  min-width: 200px;
+  padding: 0 30px 0 10px;
+  border: 1px solid var(--color-editor-border);
+  border-radius: 8px;
   outline: none;
   background: #0d1117;
   color: #d0d7de;
@@ -1317,8 +1326,8 @@ button:disabled {
 
 .console-toggle {
   margin-left: auto;
-  border: 1px solid #30363d;
-  background: #21262d;
+  border: 1px solid var(--color-editor-border);
+  background: #242820;
   color: #c9d1d9;
 }
 
@@ -1326,6 +1335,29 @@ button:disabled {
 .clear-console-button:hover:not(:disabled),
 .rerun-button:hover:not(:disabled) {
   background: #30363d;
+}
+
+.execution-readiness {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #8f9988;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.execution-readiness > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #7fa454;
+  box-shadow: 0 0 0 4px rgb(127 164 84 / 8%);
+}
+
+.execution-readiness-running > span {
+  background: #e2b94f;
+  animation: online-breathe 1.4s ease-in-out infinite;
 }
 
 .tabs {
@@ -1345,15 +1377,15 @@ button:disabled {
   min-width: 132px;
   max-width: 190px;
   height: 38px;
-  border-right: 1px solid #30363d;
-  background: #161b22;
+  border-right: 1px solid var(--color-editor-border);
+  background: #20231e;
 }
 
 .tab-main,
 .tab-close {
   border: 0;
-  border-right: 1px solid #30363d;
-  background: #161b22;
+  border-right: 1px solid var(--color-editor-border);
+  background: #20231e;
   color: #8b949e;
 }
 
@@ -1392,13 +1424,13 @@ button:disabled {
 }
 
 .tab-active {
-  background: #0d1117;
+  background: var(--color-editor);
 }
 
 .tab-active .tab-main,
 .tab-active .tab-close {
   color: #d0d7de;
-  background: #0d1117;
+  background: var(--color-editor);
 }
 
 .tab-active::after {
@@ -1408,22 +1440,91 @@ button:disabled {
   bottom: 0;
   height: 2px;
   content: '';
-  background: #3fb950;
+  background: var(--color-pear-300);
 }
 
-.editor-frame {
+.editor-stack {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
+.editor-frame {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 140px;
+  overflow: hidden;
+}
+
+.console-region {
+  display: grid;
+  grid-template-rows: 8px minmax(0, 1fr);
+  flex-grow: 0;
+  flex-shrink: 1;
+  min-height: 160px;
+  max-height: 55%;
+  overflow: hidden;
+  opacity: 1;
+  visibility: visible;
+  transition: flex-basis 180ms ease, max-height 180ms ease, min-height 180ms ease, opacity 140ms ease;
+}
+
+.console-region-collapsed {
+  min-height: 0;
+  max-height: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: flex-basis 180ms ease, max-height 180ms ease, min-height 180ms ease, opacity 100ms ease, visibility 0s linear 180ms;
+}
+
+.console-resizing .console-region {
+  transition: none;
+}
+
+.console-resize-handle {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  height: 8px;
+  border-top: 1px solid #3c4035;
+  border-bottom: 1px solid #23261f;
+  background: #292d25;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.console-resize-handle span {
+  width: 42px;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: #60675a;
+  transition: width var(--transition-fast), background var(--transition-fast);
+}
+
+.console-resize-handle:hover span,
+.console-resize-handle:focus-visible span,
+.console-resizing .console-resize-handle span {
+  width: 58px;
+  background: var(--color-pear-300);
+}
+
+.console-resize-handle:focus-visible {
+  outline-offset: -2px;
+}
+
 .execution-console {
   display: grid;
-  grid-template-rows: 34px minmax(0, 1fr);
-  height: min(230px, 34vh);
-  min-height: 140px;
-  border-top: 1px solid #30363d;
-  background: #0d1117;
+  grid-template-rows: 40px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background:
+    radial-gradient(circle at 98% 100%, rgb(129 155 63 / 7%), transparent 25%),
+    #11140f;
   color: #c9d1d9;
 }
 
@@ -1432,9 +1533,9 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 0 10px;
-  border-bottom: 1px solid #21262d;
-  background: #161b22;
+  padding: 0 14px;
+  border-bottom: 1px solid #292d25;
+  background: #1b1e19;
 }
 
 .execution-console-title {
@@ -1446,12 +1547,29 @@ button:disabled {
 }
 
 .execution-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 2px 7px;
   border-radius: 999px;
   background: #30363d;
   color: #c9d1d9;
   font-size: 10px;
   font-weight: 800;
+}
+
+.execution-status::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+  opacity: .78;
+}
+
+.execution-status-idle {
+  background: #30352c;
+  color: #bdc8b4;
 }
 
 .execution-status-completed {
@@ -1476,6 +1594,13 @@ button:disabled {
   color: #d9ecff;
 }
 
+.execution-status-running::before,
+.execution-status-queued::before,
+.execution-status-claimed::before,
+.execution-status-submitted::before {
+  animation: online-breathe 1.4s ease-in-out infinite;
+}
+
 .execution-duration {
   color: #8b949e;
   font-family: JetBrains Mono, Consolas, monospace;
@@ -1490,8 +1615,9 @@ button:disabled {
 
 .clear-console-button,
 .rerun-button {
-  height: 24px;
-  border: 1px solid #30363d;
+  height: 28px;
+  border: 1px solid var(--color-editor-border);
+  border-radius: 7px;
   background: transparent;
   color: #8b949e;
 }
@@ -1500,49 +1626,16 @@ button:disabled {
   color: #d7f8df;
 }
 
-.execution-console-body {
-  display: grid;
-  grid-template-columns: minmax(160px, 27%) minmax(0, 1fr);
-  min-height: 0;
-}
-
-.stdin-field {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 6px;
-  min-height: 0;
-  padding: 8px 10px 10px;
-  border-right: 1px solid #21262d;
-  color: #8b949e;
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.stdin-field textarea {
-  width: 100%;
-  min-height: 0;
-  padding: 7px 8px;
-  resize: none;
-  border: 1px solid #30363d;
-  border-radius: 5px;
-  outline: none;
-  background: #010409;
-  color: #c9d1d9;
-  font-family: JetBrains Mono, Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.stdin-field textarea:focus {
-  border-color: #58a6ff;
-}
-
 .execution-output {
   min-width: 0;
+  min-height: 0;
   overflow: auto;
-  padding: 8px 12px 12px;
+  padding: 12px 16px 18px;
   font-family: JetBrains Mono, Consolas, monospace;
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.5;
+  scrollbar-color: #4c5347 transparent;
+  scrollbar-width: thin;
 }
 
 .execution-progress,
@@ -2621,12 +2714,13 @@ button:disabled {
   }
 
   .execution-language-label span,
-  .java-main-hint {
+  .java-main-hint,
+  .execution-readiness {
     display: none;
   }
 
-  .execution-console-body {
-    grid-template-columns: minmax(110px, 34%) minmax(0, 1fr);
+  .execution-language-label select {
+    min-width: 160px;
   }
 }
 

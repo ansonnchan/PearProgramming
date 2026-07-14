@@ -20,7 +20,7 @@ import {
   WifiOff,
   X
 } from 'lucide-react';
-import { type DragEvent, type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import {
@@ -59,7 +59,12 @@ import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEve
 const DEFAULT_COLOR = '#000000';
 const ROOM_SESSION_STORAGE_KEY = 'pearprogram-room-session';
 const CONNECTION_SESSION_STORAGE_KEY = 'pearprogram-connection-session';
+const CONSOLE_HEIGHT_STORAGE_KEY = 'pearprogram-console-height';
 const CONTENT_SYNC_DELAY_MS = 250;
+const DEFAULT_CONSOLE_HEIGHT = 250;
+const MIN_CONSOLE_HEIGHT = 160;
+const MAX_CONSOLE_HEIGHT = 520;
+const MIN_EDITOR_HEIGHT = 170;
 const BACKEND_WAKE_URL = buildWakeUrl(API_BASE_URL, '/healthz');
 const REALTIME_WAKE_URL = 'https://pear-program-realtime.onrender.com/health';
 
@@ -155,8 +160,9 @@ export default function App() {
   const [connectionId] = useState(() => getOrCreateConnectionId());
   const [editorMountVersion, setEditorMountVersion] = useState(0);
   const [executionLanguage, setExecutionLanguage] = useState<ExecutionLanguage>('javascript');
-  const [executionStdin, setExecutionStdin] = useState('');
   const [executionPanelOpen, setExecutionPanelOpen] = useState(true);
+  const [consoleHeight, setConsoleHeight] = useState(loadConsoleHeight);
+  const [consoleResizing, setConsoleResizing] = useState(false);
 
   const openFiles = openFileIds
     .map((fileId) => files.find((file) => file.id === fileId))
@@ -179,6 +185,7 @@ export default function App() {
   const hiddenMemberCount = Math.max(0, members.length - visibleMembers.length);
 
   const editorRef = useRef<unknown>(null);
+  const editorStackRef = useRef<HTMLDivElement | null>(null);
   const monacoRef = useRef<any>(null);
   const cursorWidgetsRef = useRef<Map<string, any>>(new Map());
   const annotationWidgetsRef = useRef<Map<string, any>>(new Map());
@@ -404,6 +411,14 @@ export default function App() {
     const timer = window.setInterval(() => setPacificNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CONSOLE_HEIGHT_STORAGE_KEY, String(consoleHeight));
+    } catch {
+      // Resizing remains available when local storage is disabled.
+    }
+  }, [consoleHeight]);
 
   useEffect(() => {
     if (!authReady || bootstrappedRoomRef.current) {
@@ -879,7 +894,16 @@ export default function App() {
           </aside>
         )}
 
-        <section className="editor-area">
+        <section className={`editor-area ${consoleResizing ? 'console-resizing' : ''}`}>
+          <ExecutionToolbar
+            activeFile={Boolean(activeFile)}
+            consoleOpen={executionPanelOpen}
+            language={executionLanguage}
+            onLanguageChange={setExecutionLanguage}
+            onRun={() => void runActiveFile()}
+            onToggleConsole={() => setExecutionPanelOpen((current) => !current)}
+            submitting={executionSubmitting}
+          />
           <div className="tabs">
             {openFiles.map((file) => (
               <div className={`tab ${file.id === activeFile?.id ? 'tab-active' : ''}`} key={file.id}>
@@ -893,66 +917,79 @@ export default function App() {
               </div>
             ))}
           </div>
-          <ExecutionToolbar
-            activeFile={Boolean(activeFile)}
-            consoleOpen={executionPanelOpen}
-            language={executionLanguage}
-            onLanguageChange={setExecutionLanguage}
-            onRun={() => void runActiveFile()}
-            onToggleConsole={() => setExecutionPanelOpen((current) => !current)}
-            submitting={executionSubmitting}
-          />
-          <div className="editor-frame">
-            {activeFile ? (
-              <Editor
-                height="100%"
-                language={activeFile.language}
-                onMount={handleEditorMount}
-                options={{
-                  automaticLayout: true,
-                  fontFamily: 'JetBrains Mono, Consolas, monospace',
-                  fontSize: 14,
-                  lineHeight: 22,
-                  minimap: { enabled: false },
-                  padding: { top: 14, bottom: 14 },
-                  scrollBeyondLastLine: false,
-                  tabSize: 2
-                }}
-                path={activeFile.path}
-                theme="pear-github-dark"
-                defaultValue={activeFile.content}
-              />
-            ) : (
-              <div className="empty-editor">
-                <div className="empty-editor-content">
-                  <img alt="" className="empty-pear-idle" src={pearLogoUrl} />
-                  <h1>Upload files or a project folder to start coding together.</h1>
-                  <p>Your shared file tree will appear here after uploading.</p>
-                  <div className="empty-editor-actions">
-                    <button onClick={openUploadModal} type="button">
-                      <Upload size={16} />
-                      Upload Files
-                    </button>
-                    <button onClick={openUploadModal} type="button">
-                      <FolderPlus size={16} />
-                      Upload Folder
-                    </button>
+          <div className="editor-stack" ref={editorStackRef}>
+            <div className="editor-frame">
+              {activeFile ? (
+                <Editor
+                  height="100%"
+                  language={activeFile.language}
+                  onMount={handleEditorMount}
+                  options={{
+                    automaticLayout: true,
+                    fontFamily: 'JetBrains Mono, Consolas, monospace',
+                    fontSize: 14,
+                    lineHeight: 22,
+                    minimap: { enabled: false },
+                    padding: { top: 14, bottom: 14 },
+                    scrollbar: { horizontalScrollbarSize: 10, verticalScrollbarSize: 10 },
+                    scrollBeyondLastLine: false,
+                    tabSize: 2
+                  }}
+                  path={activeFile.path}
+                  theme="pear-github-dark"
+                  defaultValue={activeFile.content}
+                />
+              ) : (
+                <div className="empty-editor">
+                  <div className="empty-editor-content">
+                    <img alt="" className="empty-pear-idle" src={pearLogoUrl} />
+                    <h1>Upload files or a project folder to start coding together.</h1>
+                    <p>Your shared file tree will appear here after uploading.</p>
+                    <div className="empty-editor-actions">
+                      <button onClick={openUploadModal} type="button">
+                        <Upload size={16} />
+                        Upload Files
+                      </button>
+                      <button onClick={openUploadModal} type="button">
+                        <FolderPlus size={16} />
+                        Upload Folder
+                      </button>
+                    </div>
                   </div>
                 </div>
+              )}
+            </div>
+            <div
+              aria-hidden={!executionPanelOpen}
+              className={`console-region ${executionPanelOpen ? '' : 'console-region-collapsed'}`}
+              style={{ flexBasis: executionPanelOpen ? `${consoleHeight}px` : '0px' }}
+            >
+              <div
+                aria-controls="execution-console"
+                aria-label="Resize console"
+                aria-orientation="horizontal"
+                aria-valuemax={consoleMaximumHeight()}
+                aria-valuemin={MIN_CONSOLE_HEIGHT}
+                aria-valuenow={Math.min(consoleHeight, consoleMaximumHeight())}
+                className="console-resize-handle"
+                onDoubleClick={() => setConsoleHeight(DEFAULT_CONSOLE_HEIGHT)}
+                onKeyDown={handleConsoleResizeKeyDown}
+                onPointerDown={handleConsoleResizeStart}
+                role="separator"
+                tabIndex={executionPanelOpen ? 0 : -1}
+                title="Drag to resize console; double-click to reset"
+              >
+                <span />
               </div>
-            )}
+              <ExecutionConsole
+                error={executionError}
+                onClear={clearExecutionConsole}
+                onRerun={() => void runActiveFile()}
+                result={executionResult}
+                submitting={executionSubmitting}
+              />
+            </div>
           </div>
-          {executionPanelOpen && (
-            <ExecutionConsole
-              error={executionError}
-              onClear={clearExecutionConsole}
-              onRerun={() => void runActiveFile()}
-              onStdinChange={setExecutionStdin}
-              result={executionResult}
-              stdin={executionStdin}
-              submitting={executionSubmitting}
-            />
-          )}
         </section>
 
         {chatOpen ? (
@@ -1277,8 +1314,65 @@ export default function App() {
       fallbackSourceCode: currentFile.content,
       roomCode: currentRoom.code,
       language: executionLanguage,
-      stdin: executionStdin
+      stdin: ''
     }));
+  }
+
+  function consoleMaximumHeight() {
+    const availableHeight = editorStackRef.current?.clientHeight;
+    if (!availableHeight) {
+      return MAX_CONSOLE_HEIGHT;
+    }
+    return Math.max(MIN_CONSOLE_HEIGHT, Math.min(MAX_CONSOLE_HEIGHT, availableHeight - MIN_EDITOR_HEIGHT));
+  }
+
+  function handleConsoleResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = Math.min(consoleHeight, consoleMaximumHeight());
+    const maximumHeight = consoleMaximumHeight();
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    setConsoleResizing(true);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const handlePointerMove = (pointerEvent: PointerEvent) => {
+      const nextHeight = startHeight + startY - pointerEvent.clientY;
+      setConsoleHeight(clampNumber(nextHeight, MIN_CONSOLE_HEIGHT, maximumHeight));
+    };
+    const stopResizing = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResizing);
+      window.removeEventListener('pointercancel', stopResizing);
+      window.removeEventListener('blur', stopResizing);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      setConsoleResizing(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResizing);
+    window.addEventListener('pointercancel', stopResizing);
+    window.addEventListener('blur', stopResizing);
+  }
+
+  function handleConsoleResizeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 48 : 20;
+    let nextHeight: number | null = null;
+    if (event.key === 'ArrowUp') nextHeight = consoleHeight + step;
+    if (event.key === 'ArrowDown') nextHeight = consoleHeight - step;
+    if (event.key === 'Home') nextHeight = MIN_CONSOLE_HEIGHT;
+    if (event.key === 'End') nextHeight = consoleMaximumHeight();
+    if (nextHeight === null) {
+      return;
+    }
+    event.preventDefault();
+    setConsoleHeight(clampNumber(nextHeight, MIN_CONSOLE_HEIGHT, consoleMaximumHeight()));
   }
 
   function updateMentionState(input: HTMLInputElement) {
@@ -2829,6 +2923,22 @@ function getOrCreateConnectionId() {
   const id = crypto.randomUUID();
   sessionStorage.setItem(CONNECTION_SESSION_STORAGE_KEY, id);
   return id;
+}
+
+function loadConsoleHeight() {
+  try {
+    const storedHeight = Number(window.localStorage.getItem(CONSOLE_HEIGHT_STORAGE_KEY));
+    if (Number.isFinite(storedHeight) && storedHeight > 0) {
+      return clampNumber(storedHeight, MIN_CONSOLE_HEIGHT, MAX_CONSOLE_HEIGHT);
+    }
+  } catch {
+    // Use the default when local storage is unavailable.
+  }
+  return DEFAULT_CONSOLE_HEIGHT;
+}
+
+function clampNumber(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 function loadRoomSession(): RoomSessionState | null {

@@ -23,8 +23,6 @@ const requiredProps = {
   error: '',
   onClear: () => undefined,
   onRerun: () => undefined,
-  onStdinChange: () => undefined,
-  stdin: '',
   submitting: false
 };
 
@@ -90,18 +88,31 @@ describe('ExecutionConsole', () => {
     expect(screen.getByText(message)).toBeInTheDocument();
   });
 
-  it('supports editing stdin, rerunning, and clearing through explicit buttons', () => {
+  it('supports rerunning and clearing without exposing a stdin control', () => {
     const onClear = vi.fn();
     const onRerun = vi.fn();
-    const onStdinChange = vi.fn();
-    render(<ExecutionConsole {...requiredProps} error="failure" onClear={onClear} onRerun={onRerun}
-      onStdinChange={onStdinChange} stdin="input" result={null} />);
+    render(<ExecutionConsole {...requiredProps} error="failure" onClear={onClear} onRerun={onRerun} result={null} />);
 
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'next input' } });
     fireEvent.click(screen.getByRole('button', { name: 'Run again' }));
     fireEvent.click(screen.getByRole('button', { name: 'Clear output' }));
-    expect(onStdinChange).toHaveBeenCalledWith('next input');
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(onRerun).toHaveBeenCalledOnce();
     expect(onClear).toHaveBeenCalledOnce();
+  });
+
+  it('does not pull manual scrolling back to the bottom when output changes', () => {
+    const { container, rerender } = render(<ExecutionConsole {...requiredProps} result={execution('COMPLETED', { stdout: 'first output' })} />);
+    const output = container.querySelector('.execution-output') as HTMLDivElement;
+    let scrollTop = 0;
+    const setScrollTop = vi.fn((value: number) => { scrollTop = value; });
+    Object.defineProperties(output, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, get: () => scrollTop, set: setScrollTop }
+    });
+
+    fireEvent.scroll(output);
+    rerender(<ExecutionConsole {...requiredProps} result={execution('COMPLETED', { stdout: 'first output\nnew output' })} />);
+    expect(setScrollTop).not.toHaveBeenCalled();
   });
 });

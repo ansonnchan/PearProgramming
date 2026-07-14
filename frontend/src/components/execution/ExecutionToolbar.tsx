@@ -41,6 +41,10 @@ export function ExecutionToolbar({
         </select>
       </label>
       {language === 'java' && <span className="java-main-hint">Java entry class: Main</span>}
+      <span className={`execution-readiness ${submitting ? 'execution-readiness-running' : ''}`}>
+        <span />
+        {submitting ? 'Running' : activeFile ? 'Ready' : 'Choose a file'}
+      </span>
       <button className="console-toggle" onClick={onToggleConsole} type="button">
         <SquareTerminal size={14} />
         {consoleOpen ? 'Hide console' : 'Show console'}
