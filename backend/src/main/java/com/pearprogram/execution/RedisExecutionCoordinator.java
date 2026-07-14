@@ -260,23 +260,32 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
 
     @Override
     public int recoverExpiredLeases(Instant now, String message, Duration ttl) {
-        Set<String> expired = redis.opsForZSet().rangeByScore(leasesKey(), 0, now.toEpochMilli(), 0, 100);
-        if (expired == null) return 0;
-        int recovered = 0;
-        for (String id : new ArrayList<>(expired)) {
-            UUID executionId;
-            try { executionId = UUID.fromString(id); } catch (IllegalArgumentException ignored) { redis.opsForZSet().remove(leasesKey(), id); continue; }
-            Long result = redis.execute(RECOVER, List.of(queueKey(), leasesKey(), jobKey(executionId), recordKey(executionId)), id,
-                    Long.toString(now.toEpochMilli()), message, Long.toString(now.toEpochMilli()), Long.toString(ttl.toMillis()));
-            if (result != null && result > 0) recovered++;
+        try {
+            Set<String> expired = redis.opsForZSet().rangeByScore(leasesKey(), 0, now.toEpochMilli(), 0, 100);
+            if (expired == null) return 0;
+            int recovered = 0;
+            for (String id : new ArrayList<>(expired)) {
+                UUID executionId;
+                try { executionId = UUID.fromString(id); } catch (IllegalArgumentException ignored) { redis.opsForZSet().remove(leasesKey(), id); continue; }
+                Long result = redis.execute(RECOVER, List.of(queueKey(), leasesKey(), jobKey(executionId), recordKey(executionId)), id,
+                        Long.toString(now.toEpochMilli()), message, Long.toString(now.toEpochMilli()), Long.toString(ttl.toMillis()));
+                if (result != null && result > 0) recovered++;
+            }
+            return recovered;
+        } catch (DataAccessException exception) {
+            log.warn("Execution lease recovery is waiting for Redis. reason={}", rootMessage(exception));
+            return 0;
         }
-        return recovered;
     }
 
     @Override
     public long queueDepth() {
-        Long size = redis.opsForZSet().size(queueKey());
-        return size == null ? 0 : size;
+        try {
+            Long size = redis.opsForZSet().size(queueKey());
+            return size == null ? 0 : size;
+        } catch (DataAccessException exception) {
+            return 0;
+        }
     }
 
     private ExecutionResponse toResponse(Map<Object, Object> map) {
