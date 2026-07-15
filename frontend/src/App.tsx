@@ -10,9 +10,11 @@ import {
   Folder,
   FolderPlus,
   ImagePlus,
+  Leaf,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightOpen,
+  Plus,
   Settings,
   Upload,
   UserRound,
@@ -142,6 +144,7 @@ export default function App() {
   const [roomLocked, setRoomLocked] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [pearMenuOpen, setPearMenuOpen] = useState(false);
+  const [explorerCreateOpen, setExplorerCreateOpen] = useState(false);
   const [delegateOpen, setDelegateOpen] = useState(false);
   const [delegateUserId, setDelegateUserId] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
@@ -305,11 +308,11 @@ export default function App() {
       inherit: true,
       rules: [],
       colors: {
-        'editor.background': '#0d1117',
-        'editorGutter.background': '#0d1117',
-        'editorLineNumber.foreground': '#5f6b7a',
+        'editor.background': '#1a1c18',
+        'editorGutter.background': '#1a1c18',
+        'editorLineNumber.foreground': '#77796e',
         'editorCursor.foreground': '#58a6ff',
-        'editor.selectionBackground': '#264f78'
+        'editor.selectionBackground': '#3d5261'
       }
     });
     monaco.editor.setTheme('pear-github-dark');
@@ -714,7 +717,7 @@ export default function App() {
               <span>Copy</span>
             </button>
           </div>
-          <span className={`role-chip ${isLeadPear ? 'role-lead' : ''}`}>{roleLabel}</span>
+          <span className={`role-chip ${isLeadPear ? 'role-lead' : ''}`}>{isLeadPear && <Leaf size={13} />}{roleLabel}</span>
         </div>
         <div className="topbar-actions">
           <div className="collaborators" aria-label="Collaborators">
@@ -803,6 +806,17 @@ export default function App() {
           <div className="pane-title-row">
             <span className="pane-title">Explorer</span>
             <div className="icon-row">
+              <div className="explorer-create-menu">
+                <button aria-expanded={explorerCreateOpen} aria-label="Create file or folder" className="icon-button explorer-create-button" onClick={() => setExplorerCreateOpen((current) => !current)} title="Create file or folder" type="button">
+                  <Plus size={17} />
+                </button>
+                {explorerCreateOpen && (
+                  <div className="explorer-create-popover">
+                    <button onClick={() => { setExplorerCreateOpen(false); handleNewFile(); }} type="button"><FilePlus2 size={15} /> New file</button>
+                    <button onClick={() => { setExplorerCreateOpen(false); handleNewFolder(); }} type="button"><FolderPlus size={15} /> New folder</button>
+                  </div>
+                )}
+              </div>
               <button aria-label="Hide explorer" className="icon-button panel-minimize-button" onClick={() => setExplorerOpen(false)} type="button" title="Hide explorer">
                 <PanelLeftClose size={16} />
               </button>
@@ -811,19 +825,11 @@ export default function App() {
           <div className="explorer-actions" aria-label="Explorer actions">
             <button className="sidebar-action" onClick={openFilePicker} type="button">
               <Upload size={15} />
-              <span>Upload file</span>
+              <span>Upload File</span>
             </button>
             <button className="sidebar-action" onClick={openFolderPicker} type="button">
               <FolderPlus size={15} />
-              <span>Upload folder</span>
-            </button>
-            <button className="sidebar-action" onClick={handleNewFile} type="button">
-              <FilePlus2 size={15} />
-              <span>New file</span>
-            </button>
-            <button className="sidebar-action" onClick={handleNewFolder} type="button">
-              <FolderPlus size={15} />
-              <span>New folder</span>
+              <span>Upload Folder</span>
             </button>
           </div>
           {/* Hidden file input — individual files, no webkitdirectory */}

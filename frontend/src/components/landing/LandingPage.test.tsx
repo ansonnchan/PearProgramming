@@ -22,12 +22,12 @@ describe('LandingPage', () => {
     const onJoin = vi.fn();
     render(<LandingPage {...baseProps} onCodeChange={onCodeChange} onCreate={onCreate} onJoin={onJoin} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Create a room' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create Pear Room' }));
     expect(onCreate).toHaveBeenCalledOnce();
 
-    fireEvent.change(screen.getByLabelText('Room code'), { target: { value: 'ABC123' } });
+    fireEvent.change(screen.getByLabelText('Enter Room Code'), { target: { value: 'ABC123' } });
     expect(onCodeChange).toHaveBeenCalledWith('ABC123');
-    fireEvent.click(screen.getByRole('button', { name: 'Join room' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Join Pear Room' }));
     expect(onJoin).toHaveBeenCalledOnce();
   });
 
@@ -41,10 +41,10 @@ describe('LandingPage', () => {
   it('locks both room actions while an entry request is running', () => {
     const { rerender } = render(<LandingPage {...baseProps} creating />);
     expect(screen.getByRole('button', { name: 'Preparing your room…' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Join room' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Join Pear Room' })).toBeDisabled();
 
     rerender(<LandingPage {...baseProps} joining />);
-    expect(screen.getByRole('button', { name: 'Create a room' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Create Pear Room' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Joining…' })).toBeDisabled();
   });
 

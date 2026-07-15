@@ -1,3 +1,4 @@
+import { BookOpen, Bot, Coffee, Leaf, MessageCircle, Sparkles, Users, Zap } from 'lucide-react';
 import pearLogoUrl from '../../../assets/favicon.png';
 import landingCozyDeskUrl from '../../../assets/landing-cozy-desk.webp';
 import landingCozyRoomUrl from '../../../assets/landing-cozy-room.webp';
@@ -38,10 +39,11 @@ export function LandingPage({
 
       <aside aria-label="Free tier service notice" className="render-tier-banner" role="status">
         <div className="render-tier-message">
+          <Leaf aria-hidden="true" size={13} />
           <strong>Free tier wake-up:</strong>
           <span>First room creation can take 1–2 minutes while the backend and real-time services start.</span>
         </div>
-        <span className="render-tier-instruction">Please open both links below to start the shared services.</span>
+        <span className="render-tier-instruction">Please click both links below to start the instances.</span>
         <div className="render-tier-links">
           {backendWakeUrl && (
             <a href={backendWakeUrl} rel="noreferrer" target="_blank">
@@ -75,12 +77,15 @@ export function LandingPage({
           <h2 className="landing-feature-heading">What makes PearProgramming special?</h2>
           <div aria-label="PearProgramming highlights" className="landing-features">
             <article>
+              <span className="landing-feature-icon"><Sparkles size={18} /></span>
               <div><strong>Real-time collaboration</strong><small>Edit and build together. See every change as it happens.</small></div>
             </article>
             <article>
+              <span className="landing-feature-icon"><MessageCircle size={18} /></span>
               <div><strong>Chat &amp; code together</strong><small>Discuss ideas and solve problems without leaving the room.</small></div>
             </article>
             <article>
+              <span className="landing-feature-icon"><Bot size={18} /></span>
               <div><strong>PearAI assistant</strong><small>Your context-aware coding companion. Mention @AI to begin.</small></div>
             </article>
           </div>
@@ -88,13 +93,13 @@ export function LandingPage({
 
         <section aria-labelledby="room-card-title" className="landing-panel" id="room-actions">
           <div className="room-card-heading">
-            <h2 id="room-card-title">Create or join a room</h2>
+            <h2 id="room-card-title">Create or Join a Room</h2>
             <p>Start empty, then upload your project.</p>
           </div>
 
           <nav aria-label="Room action shortcuts" className="landing-room-tabs">
-            <a className="active" href="#landing-create">Create Room</a>
-            <a href="#landing-room-code">Join Room</a>
+            <a className="active" href="#landing-create"><Leaf size={15} /> Create Room</a>
+            <a href="#landing-room-code"><span aria-hidden="true">🍐</span> Join Room</a>
           </nav>
 
           <div className="room-create-block" id="landing-create">
@@ -103,11 +108,11 @@ export function LandingPage({
               <small>Open an empty shared workspace as the Lead Pear.</small>
             </div>
             <button className="primary-button create-room-button" disabled={creating || joining} onClick={onCreate} type="button">
-              {creating ? 'Preparing your room…' : 'Create a room'}
+              {creating ? 'Preparing your room…' : 'Create Pear Room'}
             </button>
           </div>
 
-          <div className="landing-divider"><span>or join your pears</span></div>
+          <div className="landing-divider"><span>or</span></div>
 
           <form
             className="join-form"
@@ -116,7 +121,7 @@ export function LandingPage({
               onJoin();
             }}
           >
-            <label htmlFor="landing-room-code">Room code</label>
+            <label htmlFor="landing-room-code">Enter Room Code</label>
             <div className="join-form-row">
               <input
                 aria-describedby="landing-room-code-hint"
@@ -129,19 +134,26 @@ export function LandingPage({
                 value={code}
               />
               <button className="secondary-button" disabled={joining || creating} type="submit">
-                {joining ? 'Joining…' : 'Join room'}
+                {joining ? 'Joining…' : 'Join Pear Room'}
               </button>
             </div>
-            <small id="landing-room-code-hint">Six letters or numbers, shared by your Lead Pear.</small>
+            <small className="sr-only" id="landing-room-code-hint">Six letters or numbers, shared by your Lead Pear.</small>
           </form>
 
-          <p className="landing-room-note">Rooms hold up to five collaborators.</p>
+          <p className="landing-room-note">Anyone with the room code can join.</p>
           <div aria-live="polite">
             {notice && <p className="landing-notice" role="status">{notice}</p>}
             {error && <p className="landing-error" role="alert">{error}</p>}
           </div>
         </section>
       </section>
+
+      <footer className="landing-footer">
+        <span className="landing-footer-built"><img alt="" src={pearLogoUrl} /><span>Built with<br />pears &amp; <Coffee size={17} /></span></span>
+        <span><Zap size={19} /> Realtime Sync</span>
+        <span><Users size={19} /> Up to 5 pears / room</span>
+        <span><BookOpen size={19} /> Always learning</span>
+      </footer>
     </main>
   );
 }
