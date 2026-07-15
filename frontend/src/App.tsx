@@ -50,6 +50,7 @@ import { useRoomConnection } from './collaboration/useRoomConnection';
 import { useCollaborativeDocument } from './collaboration/useCollaborativeDocument';
 import { FileTree } from './components/file-tree/FileTree';
 import { ChatPanel, type DisplayChatMessage, type MentionOption } from './components/chat/ChatPanel';
+import { insertMentionText } from './components/chat/mention';
 import pearLogoUrl from '../assets/favicon.png';
 import pearChibiUrl from '../assets/pear_chibi.jpg';
 import type { UploadCandidate, UploadReadResult } from './uploads';
@@ -121,8 +122,6 @@ export default function App() {
   const [presenceMembers, setPresenceMembers] = useState<Record<string, Member>>({});
   const [chatDraft, setChatDraft] = useState('');
   const [chatError, setChatError] = useState('');
-  const [mentionState, setMentionState] = useState({ open: false, query: '', start: 0, end: 0 });
-  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [cursorPosition, setCursorPosition] = useState({ line: 1, col: 1 });
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [landingCode, setLandingCode] = useState('');
@@ -175,9 +174,6 @@ export default function App() {
   const humanMembers = uniqueMembers([user, ...Object.values(presenceMembers), ...remoteMembers]);
   const members = uniqueMembers([...humanMembers, { id: 'ai', name: 'AI', color: '#8B5CF6', ai: true }]);
   const mentionOptions = buildMentionOptions(members);
-  const filteredMentionOptions = mentionState.open
-    ? mentionOptions.filter((option) => mentionMatches(option, mentionState.query)).slice(0, 6)
-    : [];
   const isLeadPear = leadUserId === user.id;
   const roleLabel = isLeadPear ? 'Lead Pear' : 'Junior Pear';
   const delegateCandidates = humanMembers.filter((member) => member.id !== user.id);
@@ -210,7 +206,7 @@ export default function App() {
   const seedingFileIdsRef = useRef<Set<string>>(new Set());
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const chatInputRef = useRef<HTMLInputElement | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const entryAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const bootstrappedRoomRef = useRef(false);
@@ -994,23 +990,18 @@ export default function App() {
 
         {chatOpen ? (
           <ChatPanel
-            activeMentionIndex={mentionActiveIndex}
             draft={chatDraft}
             error={chatError}
             inputRef={chatInputRef}
-            mentionOptions={filteredMentionOptions}
+            mentionOptions={mentionOptions}
             messages={messages}
             nowLabel={formatPacificTime(pacificNow.toISOString())}
             onClose={() => setChatOpen(false)}
-            onDraftInput={(input) => {
-              setChatDraft(input.value);
+            onDraftChange={(value) => {
+              setChatDraft(value);
               setChatError('');
-              updateMentionState(input);
             }}
-            onInsertMention={insertMentionIntoDraft}
-            onMentionKeyDown={handleMentionKeyDown}
             onSend={sendChat}
-            participants={mentionOptions}
             renderContent={(message) => renderMessageContent(message.content, mentionOptions, insertMentionIntoDraft)}
             user={user}
             messageMentionsUser={(message) => messageMentionsUser(message.content, user, mentionOptions)}
@@ -1259,7 +1250,6 @@ export default function App() {
       return;
     }
 
-    setMentionState((current) => ({ ...current, open: false }));
     setChatError('');
     const mentionsAi = content.toUpperCase().includes('@AI');
     if (stompClient?.connected) {
@@ -1376,67 +1366,16 @@ export default function App() {
     setConsoleHeight(clampNumber(nextHeight, MIN_CONSOLE_HEIGHT, consoleMaximumHeight()));
   }
 
-  function updateMentionState(input: HTMLInputElement) {
-    const cursor = input.selectionStart ?? input.value.length;
-    const fragment = mentionFragmentAt(input.value, cursor);
-    if (!fragment) {
-      setMentionState((current) => ({ ...current, open: false, query: '', start: cursor, end: cursor }));
-      setMentionActiveIndex(0);
-      return;
-    }
-
-    setMentionState({ open: true, query: fragment.query, start: fragment.start, end: cursor });
-    setMentionActiveIndex(0);
-  }
-
-  function handleMentionKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (!mentionState.open || filteredMentionOptions.length === 0) {
-      return false;
-    }
-
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setMentionActiveIndex((current) => (current + 1) % filteredMentionOptions.length);
-      return true;
-    }
-
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setMentionActiveIndex((current) => (current - 1 + filteredMentionOptions.length) % filteredMentionOptions.length);
-      return true;
-    }
-
-    if (event.key === 'Enter' || event.key === 'Tab') {
-      event.preventDefault();
-      insertMentionIntoDraft(filteredMentionOptions[Math.min(mentionActiveIndex, filteredMentionOptions.length - 1)]);
-      return true;
-    }
-
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      setMentionState((current) => ({ ...current, open: false }));
-      return true;
-    }
-
-    return false;
-  }
-
   function insertMentionIntoDraft(option: MentionOption) {
     const input = chatInputRef.current;
-    const start = mentionState.open ? mentionState.start : chatDraft.length;
-    const end = mentionState.open ? mentionState.end : chatDraft.length;
-    const prefix = chatDraft.slice(0, start);
-    const suffix = chatDraft.slice(end);
-    const needsLeadingSpace = prefix.length > 0 && !/\s$/.test(prefix);
-    const nextPrefix = `${prefix}${needsLeadingSpace ? ' ' : ''}@${option.label} `;
-    const nextDraft = `${nextPrefix}${suffix.replace(/^\s+/, '')}`;
-    const nextCursor = nextPrefix.length;
-    setChatDraft(nextDraft);
+    const start = input?.selectionStart ?? chatDraft.length;
+    const end = input?.selectionEnd ?? start;
+    const insertion = insertMentionText(chatDraft, option.label, { start, end });
+    setChatDraft(insertion.value);
     setChatError('');
-    setMentionState({ open: false, query: '', start: nextCursor, end: nextCursor });
     window.setTimeout(() => {
       input?.focus();
-      input?.setSelectionRange(nextCursor, nextCursor);
+      input?.setSelectionRange(insertion.cursor, insertion.cursor);
     }, 0);
   }
 
@@ -3057,25 +2996,6 @@ function mentionBaseLabel(member: Member) {
     .replace(/\s+/g, '')
     .replace(/[^A-Za-z0-9_-]/g, '');
   return normalized || `user-${member.id.slice(0, 4)}`;
-}
-
-function mentionMatches(option: MentionOption, query: string) {
-  const normalizedQuery = query.toLowerCase();
-  return option.label.toLowerCase().includes(normalizedQuery) || option.name.toLowerCase().includes(normalizedQuery);
-}
-
-function mentionFragmentAt(value: string, cursor: number) {
-  const prefix = value.slice(0, cursor);
-  const match = prefix.match(/(^|\s)@([A-Za-z0-9_-]*)$/);
-  if (!match) {
-    return null;
-  }
-
-  const query = match[2] ?? '';
-  return {
-    query,
-    start: cursor - query.length - 1
-  };
 }
 
 function invalidMentionLabels(content: string, options: MentionOption[]) {

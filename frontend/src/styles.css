@@ -61,7 +61,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -2160,24 +2161,31 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 40px;
   gap: 8px;
-  align-items: center;
+  align-items: end;
   padding: 10px;
 }
 
-.chat-input input {
+.chat-input textarea {
   min-width: 0;
+  min-height: 40px;
+  max-height: 112px;
   height: 40px;
-  padding: 0 11px;
+  padding: 10px 11px;
+  overflow-y: auto;
   border: 1px solid var(--color-border);
   border-radius: 10px;
   outline: none;
   background: var(--color-surface-strong);
   color: var(--color-text);
   font-size: 12px;
+  line-height: 1.45;
+  resize: none;
+  scrollbar-color: rgb(129 155 63 / 38%) transparent;
+  scrollbar-width: thin;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
 }
 
-.chat-input input:focus {
+.chat-input textarea:focus {
   border-color: var(--color-pear-500);
   background: #fffef9;
   box-shadow: 0 0 0 3px rgb(129 155 63 / 16%);
@@ -2206,34 +2214,54 @@ button:disabled {
 
 .mention-menu {
   position: absolute;
-  right: 9px;
-  bottom: 48px;
-  left: 9px;
-  z-index: 5;
+  right: 10px;
+  bottom: calc(100% + 8px);
+  left: 10px;
+  z-index: 30;
   display: grid;
   gap: 4px;
-  max-height: 178px;
-  padding: 6px;
+  max-height: min(248px, 40vh);
+  padding: 7px;
   overflow-y: auto;
-  border: 1px solid #cad7ad;
-  border-radius: 8px;
-  background: #fffefa;
-  box-shadow: 0 14px 32px rgb(63 79 45 / 20%);
+  overscroll-behavior: contain;
+  scroll-padding: 34px 0 4px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 12px;
+  background: var(--color-surface-strong);
+  box-shadow: var(--shadow-raised);
+  scrollbar-color: rgb(129 155 63 / 45%) transparent;
+  scrollbar-width: thin;
+}
+
+.mention-menu-label {
+  position: sticky;
+  top: -7px;
+  z-index: 1;
+  display: block;
+  margin: -7px -7px 1px;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid rgb(205 182 142 / 36%);
+  background: rgb(255 253 247 / 96%);
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
 }
 
 .mention-option {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 30px;
-  padding: 0 8px;
+  min-height: 42px;
+  padding: 5px 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
-  color: #2f343b;
+  color: var(--color-text);
   font-size: 12px;
-  font-weight: 800;
   text-align: left;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
 }
 
 .mention-option-active,
@@ -2242,12 +2270,41 @@ button:disabled {
   background: #f2f7dc;
 }
 
+.mention-option > span:last-child {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.mention-option strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-option small {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-empty {
+  padding: 12px 9px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
 .mention-avatar {
   display: inline-grid;
   place-items: center;
-  flex: 0 0 20px;
-  width: 20px;
-  height: 20px;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   font-size: 9px;
   font-weight: 900;
