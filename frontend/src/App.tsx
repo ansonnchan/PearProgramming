@@ -1010,6 +1010,7 @@ export default function App() {
             onInsertMention={insertMentionIntoDraft}
             onMentionKeyDown={handleMentionKeyDown}
             onSend={sendChat}
+            participants={mentionOptions}
             renderContent={(message) => renderMessageContent(message.content, mentionOptions, insertMentionIntoDraft)}
             user={user}
             messageMentionsUser={(message) => messageMentionsUser(message.content, user, mentionOptions)}

@@ -1,5 +1,5 @@
-import { Bot, PanelRightClose, Send } from 'lucide-react';
-import type { KeyboardEvent, ReactNode, RefObject } from 'react';
+import { Bot, MessageCircle, PanelRightClose, Send } from 'lucide-react';
+import { type KeyboardEvent, type ReactNode, type RefObject, useLayoutEffect, useRef } from 'react';
 import type { ChatMessage, Member } from '../../types';
 
 export type DisplayChatMessage = ChatMessage & { system?: boolean };
@@ -18,6 +18,7 @@ type ChatPanelProps = {
   onInsertMention: (option: MentionOption) => void;
   onMentionKeyDown: (event: KeyboardEvent<HTMLInputElement>) => boolean;
   onSend: () => void;
+  participants: MentionOption[];
   renderContent: (message: DisplayChatMessage) => ReactNode;
   user: Member;
   messageMentionsUser: (message: DisplayChatMessage) => boolean;
@@ -25,8 +26,25 @@ type ChatPanelProps = {
 
 export function ChatPanel({
   activeMentionIndex, draft, error, inputRef, mentionOptions, messages, nowLabel, onClose,
-  onDraftInput, onInsertMention, onMentionKeyDown, onSend, renderContent, messageMentionsUser
+  onDraftInput, onInsertMention, onMentionKeyDown, onSend, participants, renderContent, user, messageMentionsUser
 }: ChatPanelProps) {
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const shouldFollowMessagesRef = useRef(true);
+
+  useLayoutEffect(() => {
+    const messageList = messageListRef.current;
+    if (messageList && shouldFollowMessagesRef.current) {
+      messageList.scrollTop = messageList.scrollHeight;
+    }
+  }, [messages]);
+
+  const handleMessageScroll = () => {
+    const messageList = messageListRef.current;
+    if (!messageList) return;
+    const distanceFromBottom = messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight;
+    shouldFollowMessagesRef.current = distanceFromBottom < 56;
+  };
+
   return (
     <aside className="chat" id="room-chat">
       <div className="pane-title-row chat-title-row">
@@ -38,14 +56,36 @@ export function ChatPanel({
           </button>
         </div>
       </div>
-      <div className="messages">
-        {messages.map((message) => (
-          <article className={`message ${message.ai ? 'message-ai' : ''} ${message.system ? 'message-system' : ''} ${messageMentionsUser(message) ? 'message-mentioned' : ''}`} key={message.id}>
-            {message.system ? <p>{message.content}</p> : (
-              <><div className="message-meta"><span>{message.displayName}</span><span>{formatPacificTime(message.createdAt)}</span></div><p>{renderContent(message)}</p></>
-            )}
-          </article>
-        ))}
+      <div className="messages" onScroll={handleMessageScroll} ref={messageListRef}>
+        {messages.length === 0 && (
+          <div className="chat-empty-state">
+            <span className="chat-empty-icon"><MessageCircle size={18} /></span>
+            <strong>The room is quiet</strong>
+            <span>Say hello when your coding partner arrives.</span>
+          </div>
+        )}
+        {messages.map((message) => {
+          const participant = participants.find((option) => option.id === message.userId);
+          const senderColor = message.ai ? '#7c5aa6' : participant?.color ?? (message.userId === user.id ? user.color : '#667653');
+          return (
+            <article className={`message ${message.ai ? 'message-ai' : ''} ${message.system ? 'message-system' : ''} ${messageMentionsUser(message) ? 'message-mentioned' : ''}`} key={message.id}>
+              {message.system ? <p>{message.content}</p> : (
+                <div className="message-row">
+                  <span aria-hidden="true" className={`message-avatar ${message.ai ? 'message-avatar-ai' : ''}`} style={{ backgroundColor: `${senderColor}1f`, color: senderColor }}>
+                    {message.ai ? <Bot size={13} /> : initials(message.displayName)}
+                  </span>
+                  <div className="message-body">
+                    <div className="message-meta">
+                      <span style={{ color: senderColor }}>{message.displayName}</span>
+                      <time dateTime={message.createdAt}>{formatPacificTime(message.createdAt)}</time>
+                    </div>
+                    <p>{renderContent(message)}</p>
+                  </div>
+                </div>
+              )}
+            </article>
+          );
+        })}
       </div>
       <div className="chat-input-shell">
         {mentionOptions.length > 0 && (
