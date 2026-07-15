@@ -2,6 +2,7 @@ import Editor, { type OnMount } from '@monaco-editor/react';
 import { Client } from '@stomp/stompjs';
 import {
   Bot,
+  Braces,
   Check,
   ChevronDown,
   Copy,
@@ -17,6 +18,7 @@ import {
   Plus,
   Settings,
   Upload,
+  UsersRound,
   UserRound,
   Wifi,
   WifiOff,
@@ -944,7 +946,17 @@ export default function App() {
               ) : (
                 <div className="empty-editor">
                   <div className="empty-editor-content">
-                    <img alt="" className="empty-pear-idle" src={pearLogoUrl} />
+                    <div aria-hidden="true" className="empty-editor-sketch">
+                      <div className="empty-sketch-window">
+                        <div className="empty-sketch-window-bar"><span /><span /><span /><em>shared-room.js</em></div>
+                        <div className="empty-sketch-code">
+                          <span><i>1</i><code>const room = <strong>'together'</strong>;</code></span>
+                          <span><i>2</i><code>shareIdeas(room);</code></span>
+                          <span><i>3</i><code>grow(<strong>'side by side'</strong>);</code></span>
+                        </div>
+                      </div>
+                      <div className="empty-sketch-caption"><Braces size={17} /><span>Pair-ready workspace</span><UsersRound size={17} /></div>
+                    </div>
                     <h1>Upload files or a project folder to start coding together.</h1>
                     <p>Your shared file tree will appear here after uploading.</p>
                     <div className="empty-editor-actions">

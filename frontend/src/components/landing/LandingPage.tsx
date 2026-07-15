@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Coffee, Leaf, MessageCircle, Sparkles, Users, Zap } from 'lucide-react';
+import { Bot, Leaf, MessageCircle, Sparkles } from 'lucide-react';
 import pearLogoUrl from '../../../assets/favicon.png';
 import landingCozyDeskUrl from '../../../assets/landing-cozy-desk.webp';
 import landingCozyRoomUrl from '../../../assets/landing-cozy-room.webp';
@@ -33,9 +33,6 @@ export function LandingPage({
       <div aria-hidden="true" className="landing-paper-grain" />
       <img alt="" aria-hidden="true" className="landing-cozy-desk" src={landingCozyDeskUrl} />
       <img alt="" aria-hidden="true" className="landing-cozy-scene" src={landingCozyRoomUrl} />
-      <span aria-hidden="true" className="landing-paper-note landing-paper-note-left">Small steps,<br />big projects.</span>
-      <span aria-hidden="true" className="landing-paper-note landing-paper-note-right">Code together.<br />Grow together.</span>
-      <code aria-hidden="true" className="landing-code-note">for (let i = 0;<br />i &lt; n; i++) &#123;<br />&nbsp;&nbsp;code();<br />&#125;</code>
 
       <aside aria-label="Free tier service notice" className="render-tier-banner" role="status">
         <div className="render-tier-message">
@@ -148,12 +145,6 @@ export function LandingPage({
         </section>
       </section>
 
-      <footer className="landing-footer">
-        <span className="landing-footer-built"><img alt="" src={pearLogoUrl} /><span>Built with<br />pears &amp; <Coffee size={17} /></span></span>
-        <span><Zap size={19} /> Realtime Sync</span>
-        <span><Users size={19} /> Up to 5 pears / room</span>
-        <span><BookOpen size={19} /> Always learning</span>
-      </footer>
     </main>
   );
 }
