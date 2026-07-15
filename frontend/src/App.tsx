@@ -51,8 +51,8 @@ import { useCollaborativeDocument } from './collaboration/useCollaborativeDocume
 import { FileTree } from './components/file-tree/FileTree';
 import { ChatPanel, type DisplayChatMessage, type MentionOption } from './components/chat/ChatPanel';
 import { insertMentionText } from './components/chat/mention';
+import { LandingPage } from './components/landing/LandingPage';
 import pearLogoUrl from '../assets/favicon.png';
-import pearChibiUrl from '../assets/pear_chibi.jpg';
 import type { UploadCandidate, UploadReadResult } from './uploads';
 import { projectNameForPaths, readDroppedUploadCandidates, readUploadCandidates, UPLOAD_ACCEPT } from './uploads';
 import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, RoomSessionState, WorkspaceFile } from './types';
@@ -2542,104 +2542,6 @@ export default function App() {
     }
   }
 
-}
-
-function LandingPage({
-  backendWakeUrl,
-  code,
-  creating,
-  error,
-  joining,
-  notice,
-  onCodeChange,
-  onCreate,
-  onJoin,
-  realtimeWakeUrl
-}: {
-  backendWakeUrl: string;
-  code: string;
-  creating: boolean;
-  error: string;
-  joining: boolean;
-  notice: string;
-  onCodeChange: (code: string) => void;
-  onCreate: () => void;
-  onJoin: () => void;
-  realtimeWakeUrl: string;
-}) {
-  return (
-    <main className="landing-shell">
-      <div className="render-tier-banner" role="status">
-        <span className="render-tier-message">
-          <strong>Render free tier wake-up:</strong>
-          <span>First room creation can take 1-2 minutes while the backend and realtime services start.</span>
-        </span>
-        <span className="render-tier-instruction">Please click both links below to start the instances.</span>
-        <span className="render-tier-links">
-          {backendWakeUrl && <a href={backendWakeUrl} rel="noreferrer" target="_blank">{backendWakeUrl}</a>}
-          {realtimeWakeUrl && <a href={realtimeWakeUrl} rel="noreferrer" target="_blank">{realtimeWakeUrl}</a>}
-        </span>
-      </div>
-      <img alt="" className="landing-chibi" src={pearChibiUrl} />
-      <section className="landing-hero">
-        <div className="landing-hero-grid">
-          <div className="landing-copy">
-            <div className="landing-brand landing-brand-hero">
-              <img alt="" className="brand-logo brand-logo-large" src={pearLogoUrl} />
-              <h1>Pear Programming</h1>
-            </div>
-            <p className="landing-subheading">Pair Program Together. Real-time Coding Rooms.</p>
-            <h1>Code with others in a <strong>pear-ly</strong> friendly browser IDE in real time.</h1>
-            <p>
-              Pear Programming is a collaborative coding platform where teams can write code together in real time, chat alongside their work, and stay in sync in a shared browser IDE. Rooms are limited to 5 pears for smooth collaboration.
-      <br/>
-      <br/>
-      <b> What makes Pear Programming special?</b>
-      <br/>
-      <br/>
-        Meet <b>PearAI</b>—your context-aware coding assistant that understands your file, edits, cursors, and conversations to help you move faster.
-        PearAI will live in your room, ready to assist whenever you need it. Just mention @AI in chat to get started.
-
-              <br />
-              <br></br>
-              Now, go <strong>get pearing</strong>.
-            </p>
- 
-          </div>
-          <section className="landing-panel" id="room-actions">
-            <div className="room-card-heading">
-              <span>Create or Join a Room</span>
-              <small>Start empty, then upload your project</small>
-            </div>
-            <div className="landing-actions">
-              <button className="primary-button create-room-button" disabled={creating} onClick={onCreate} type="button">
-                {creating ? 'Creating...' : 'Create Pear Room'}
-              </button>
-              <form
-                className="join-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  onJoin();
-                }}
-              >
-                <input
-                  autoCapitalize="characters"
-                  onChange={(event) => onCodeChange(event.target.value)}
-                  placeholder="Enter Room Code"
-                  value={code}
-                />
-                <button className="secondary-button" disabled={joining} type="submit">
-                  {joining ? 'Joining...' : 'Join Pear Room'}
-                </button>
-              </form>
-            </div>
-            {notice && <p className="landing-notice">{notice}</p>}
-            {error && <p className="landing-error">{error}</p>}
-          </section>
-        </div>
-      </section>
-    </main>
-  );
 }
 
 function UploadModal({
