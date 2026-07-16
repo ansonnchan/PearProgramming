@@ -67,9 +67,22 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
 export const EXECUTION_LANGUAGES = [
   { id: 'java', label: 'Java' },
   { id: 'python', label: 'Python' },
-  { id: 'javascript', label: 'JavaScript (Node.js)' },
+  { id: 'javascript', label: 'JavaScript' },
   { id: 'c', label: 'C' },
-  { id: 'cpp', label: 'C++' }
+  { id: 'cpp', label: 'C++' },
+  { id: 'typescript', label: 'TypeScript' },
+  { id: 'sql', label: 'SQL' },
+  { id: 'csharp', label: 'C#' },
+  { id: 'php', label: 'PHP' },
+  { id: 'ruby', label: 'Ruby' },
+  { id: 'go', label: 'Go' },
+  { id: 'rust', label: 'Rust' },
+  { id: 'kotlin', label: 'Kotlin' },
+  { id: 'swift', label: 'Swift' },
+  { id: 'r', label: 'R' },
+  { id: 'shell', label: 'Shell' },
+  { id: 'markdown', label: 'Markdown' },
+  { id: 'cpp', label: 'C++' },
 ] as const;
 
 export type ExecutionLanguage = typeof EXECUTION_LANGUAGES[number]['id'];
