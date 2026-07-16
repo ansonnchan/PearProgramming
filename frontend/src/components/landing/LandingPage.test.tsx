@@ -31,6 +31,14 @@ describe('LandingPage', () => {
     expect(onJoin).toHaveBeenCalledOnce();
   });
 
+  it('presents the create and join forms without redundant shortcut tabs', () => {
+    render(<LandingPage {...baseProps} />);
+
+    expect(screen.queryByRole('navigation', { name: 'Room action shortcuts' })).not.toBeInTheDocument();
+    expect(screen.getByText('Start a new room')).toBeInTheDocument();
+    expect(screen.getByLabelText('Enter Room Code')).toBeInTheDocument();
+  });
+
   it('exposes compact service wake-up links', () => {
     render(<LandingPage {...baseProps} />);
 

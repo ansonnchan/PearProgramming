@@ -7,6 +7,7 @@ import com.pearprogram.rooms.RoomService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -109,10 +111,43 @@ class RoomPresenceIntegrationTests {
         assertThat(state.activeMemberCount("PEAR12")).isZero();
     }
 
+    @Test
+    void leadCanLockAndUnlockWhileNonLeadCannotChangeRoomAccess() {
+        GuestPrincipal creator = principal("Creator");
+        GuestPrincipal existingMember = principal("Existing member");
+        GuestPrincipal prospectiveMember = principal("Prospective member");
+        join("creator-connection", creator);
+        join("member-connection", existingMember);
+
+        changeLock("creator-connection", creator, true);
+
+        assertThat(state.roomAccess("PEAR12", prospectiveMember.id(), prospectiveMember.displayName()))
+                .extracting("canJoin", "reason", "locked")
+                .containsExactly(false, "locked", true);
+        assertThat(state.roomAccess("PEAR12", existingMember.id(), existingMember.displayName()).canJoin()).isTrue();
+
+        assertThatThrownBy(() -> changeLock("member-connection", existingMember, false))
+                .isInstanceOf(AccessDeniedException.class)
+                .hasMessageContaining("Lead Pear");
+        assertThat(state.roomAccess("PEAR12", prospectiveMember.id(), prospectiveMember.displayName()).locked()).isTrue();
+
+        changeLock("creator-connection", creator, false);
+        assertThat(state.roomAccess("PEAR12", prospectiveMember.id(), prospectiveMember.displayName()))
+                .extracting("canJoin", "reason", "locked")
+                .containsExactly(true, null, false);
+    }
+
     private void join(String connectionId, GuestPrincipal principal) {
         controller.member("PEAR12", new MemberEvent(
                 "joined", "client-user", "client-session", "client-connection", principal.displayName(), "#627d31",
                 null, null, null, null, false, OffsetDateTime.now(), null, null
+        ), connectionId, UsernamePasswordAuthenticationToken.authenticated(principal, null, List.of()));
+    }
+
+    private void changeLock(String connectionId, GuestPrincipal principal, boolean locked) {
+        controller.member("PEAR12", new MemberEvent(
+                "lock-changed", "client-user", "client-session", "client-connection", principal.displayName(), "#627d31",
+                null, null, null, null, locked, OffsetDateTime.now(), null, null
         ), connectionId, UsernamePasswordAuthenticationToken.authenticated(principal, null, List.of()));
     }
 

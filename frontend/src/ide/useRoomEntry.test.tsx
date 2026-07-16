@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RoomSessionState } from '../types';
 import { useRoomEntry } from './useRoomEntry';
@@ -83,5 +83,34 @@ describe('useRoomEntry reconnect', () => {
     await waitFor(() => expect(onOpenRoom).toHaveBeenCalledTimes(2));
     expect(onOpenRoom.mock.calls[0][1]).toHaveLength(1);
     expect(onOpenRoom.mock.calls[1][1]).toEqual([]);
+  });
+
+  it('stops a new participant at the server access check when the room is locked', async () => {
+    window.sessionStorage.clear();
+    api.getRoomAccess.mockResolvedValue({
+      canJoin: false,
+      reason: 'locked',
+      locked: true,
+      memberCount: 1,
+      maxUsers: 10,
+      leadUserId: 'user-1'
+    });
+    const onToast = vi.fn();
+    const signIn = vi.fn().mockResolvedValue({});
+    const { result } = renderHook(() => useRoomEntry({
+      authReady: true,
+      onOpenRoom: vi.fn(),
+      onToast,
+      signIn,
+      user: { id: '', name: 'You', color: '#627d31' }
+    }));
+
+    act(() => result.current.requestRoomEntry('join', 'PEAR12'));
+    act(() => result.current.setEntryProfileName('Late Pear'));
+    await act(async () => result.current.confirmEntryProfile());
+
+    expect(api.getRoomAccess).toHaveBeenCalledWith('PEAR12');
+    expect(api.joinRoom).not.toHaveBeenCalled();
+    expect(onToast).toHaveBeenCalledWith('Room is Locked. Contact the room owner if this is a mistake.');
   });
 });

@@ -94,11 +94,6 @@ export function LandingPage({
             <p>Start empty, then upload your project.</p>
           </div>
 
-          <nav aria-label="Room action shortcuts" className="landing-room-tabs">
-            <a className="active" href="#landing-create"><Leaf size={15} /> Create Room</a>
-            <a href="#landing-room-code"><span aria-hidden="true">🍐</span> Join Room</a>
-          </nav>
-
           <div className="room-create-block" id="landing-create">
             <div>
               <strong>Start a new room</strong>

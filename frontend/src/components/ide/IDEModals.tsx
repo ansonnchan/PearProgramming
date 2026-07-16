@@ -113,7 +113,7 @@ export function EntryProfileModal({
   onNameChange
 }: EntryProfileModalProps) {
   return (
-    <div className="modal-backdrop">
+    <div className="modal-backdrop entry-profile-backdrop">
       <section className="profile-modal entry-profile-modal" role="dialog" aria-modal="true" aria-label="Set up profile">
         <header>
           <h2>{action === 'create' ? 'Create your pear profile' : 'Join with your pear profile'}</h2>

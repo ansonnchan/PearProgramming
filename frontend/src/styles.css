@@ -436,37 +436,6 @@ button:disabled {
   font-size: 12px;
 }
 
-.landing-room-tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  margin-bottom: 19px;
-  overflow: hidden;
-  border: 1px solid rgb(188 154 97 / 29%);
-  border-radius: 10px;
-  background: rgb(255 249 235 / 54%);
-}
-
-.landing-room-tabs a {
-  display: grid;
-  place-items: center;
-  min-height: 44px;
-  color: rgb(79 69 51 / 82%);
-  font-family: var(--font-hand);
-  font-size: 12px;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.landing-room-tabs a > svg,
-.landing-room-tabs a > span {
-  margin-right: 6px;
-}
-
-.landing-room-tabs a.active {
-  background: linear-gradient(135deg, #81983f, #708a35);
-  color: #fff7dd;
-}
-
 .room-create-block {
   display: grid;
   gap: 10px;
@@ -3123,8 +3092,29 @@ button:disabled {
 }
 
 .entry-profile-modal {
-  border-color: #3d4f2c;
-  background: #152013;
+  border-color: #d2bc94;
+  background:
+    radial-gradient(circle at 92% 5%, rgb(196 214 129 / 30%), transparent 31%),
+    linear-gradient(150deg, #fffdf5, #f4e6cb);
+}
+
+.entry-profile-backdrop {
+  background: rgb(67 55 36 / 28%);
+  backdrop-filter: blur(3px);
+}
+
+.entry-profile-modal .field-label {
+  color: #514f3e;
+}
+
+.entry-profile-modal .field-label input {
+  border-color: rgb(166 141 94 / 44%);
+  background: rgb(255 253 247 / 88%);
+  color: #34382a;
+}
+
+.entry-profile-modal .profile-error {
+  color: #9b3d31;
 }
 
 .profile-error {
