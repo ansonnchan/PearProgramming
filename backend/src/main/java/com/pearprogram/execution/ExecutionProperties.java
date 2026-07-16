@@ -12,6 +12,7 @@ public class ExecutionProperties {
     private int maxStdinBytes = 20_000;
     private int rateLimitPerMinute = 10;
     private Duration recordTtl = Duration.ofMinutes(15);
+    private Duration initialPollInterval = Duration.ofMillis(100);
     private Duration pollInterval = Duration.ofMillis(750);
     private Duration deadline = Duration.ofSeconds(20);
     private int maxPollAttempts = 25;
@@ -30,6 +31,8 @@ public class ExecutionProperties {
     public void setRateLimitPerMinute(int value) { this.rateLimitPerMinute = value; }
     public Duration getRecordTtl() { return recordTtl; }
     public void setRecordTtl(Duration value) { this.recordTtl = value; }
+    public Duration getInitialPollInterval() { return initialPollInterval; }
+    public void setInitialPollInterval(Duration value) { this.initialPollInterval = value; }
     public Duration getPollInterval() { return pollInterval; }
     public void setPollInterval(Duration value) { this.pollInterval = value; }
     public Duration getDeadline() { return deadline; }

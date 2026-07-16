@@ -42,6 +42,10 @@ The report separates:
 - Judge0-reported program runtime;
 - approximate orchestration overhead.
 
+Judge0 polling starts at `JUDGE0_INITIAL_POLL_INTERVAL` (100 ms by default) and backs off exponentially to
+`JUDGE0_POLL_INTERVAL` (750 ms by default). This reduces completion latency for short programs without applying
+the fastest polling rate throughout the execution deadline.
+
 Run benchmarks against a warmed deployment and record the environment, Judge0 provider, language, run count, concurrency, and date. Free-tier cold starts should be reported separately rather than removed without explanation.
 
 ## Recovery benchmark

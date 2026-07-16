@@ -34,6 +34,7 @@ class ExecutionServiceTests {
     @BeforeEach
     void setUp() {
         properties = new ExecutionProperties();
+        properties.setInitialPollInterval(Duration.ofMillis(1));
         properties.setPollInterval(Duration.ofMillis(1));
         properties.setDeadline(Duration.ofMillis(200));
         properties.setMaxPollAttempts(4);
@@ -215,6 +216,18 @@ class ExecutionServiceTests {
 
         assertThat(meterRegistry.get(ExecutionMetrics.RECOVERIES).tag("outcome", "requeued").counter().count()).isEqualTo(1);
         assertThat(meterRegistry.get(ExecutionMetrics.RECOVERY_DETECTION_DELAY).tag("outcome", "requeued").timer().count()).isEqualTo(1);
+    }
+
+    @Test
+    void backsOffResultPollingWithoutExceedingTheConfiguredMaximum() {
+        properties.setInitialPollInterval(Duration.ofMillis(100));
+        properties.setPollInterval(Duration.ofMillis(750));
+
+        assertThat(service.pollDelayMillis(0, 10_000)).isEqualTo(100);
+        assertThat(service.pollDelayMillis(1, 10_000)).isEqualTo(200);
+        assertThat(service.pollDelayMillis(2, 10_000)).isEqualTo(400);
+        assertThat(service.pollDelayMillis(3, 10_000)).isEqualTo(750);
+        assertThat(service.pollDelayMillis(8, 300)).isEqualTo(300);
     }
 
     @Test

@@ -75,6 +75,7 @@ pearprogram:
     max-stdin-bytes: ${EXECUTION_MAX_STDIN_BYTES:20000}
     rate-limit-per-minute: ${EXECUTION_RATE_LIMIT_PER_MINUTE:10}
     record-ttl: ${EXECUTION_RECORD_TTL:15m}
+    initial-poll-interval: ${JUDGE0_INITIAL_POLL_INTERVAL:100ms}
     poll-interval: ${JUDGE0_POLL_INTERVAL:750ms}
     deadline: ${JUDGE0_EXECUTION_DEADLINE:20s}
     max-poll-attempts: ${JUDGE0_MAX_POLL_ATTEMPTS:25}

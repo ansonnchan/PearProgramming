@@ -172,7 +172,7 @@ public class ExecutionService {
                     terminal = true;
                     return;
                 }
-                sleepUntilNextPoll(claimed.deadline());
+                sleepUntilNextPoll(claimed.deadline(), attempt);
             }
             fail(claimed, ExecutionStatus.TIMED_OUT, "Execution did not finish before the polling limit.", startedAt);
             terminal = true;
@@ -238,11 +238,19 @@ public class ExecutionService {
 
     private String normalizeRoomCode(String raw) { return raw == null ? "" : raw.trim().replaceAll("[\\s-]+", "").toUpperCase(); }
 
-    private void sleepUntilNextPoll(Instant deadline) {
+    private void sleepUntilNextPoll(Instant deadline, int attempt) {
         long remaining = Math.max(0, Duration.between(Instant.now(), deadline).toMillis());
-        long delay = Math.min(Math.max(1, properties.getPollInterval().toMillis()), remaining);
+        long delay = pollDelayMillis(attempt, remaining);
         try { Thread.sleep(delay); }
         catch (InterruptedException exception) { Thread.currentThread().interrupt(); throw new ExecutionProviderException("Execution polling was interrupted", true, exception); }
+    }
+
+    long pollDelayMillis(int attempt, long remainingMillis) {
+        long initial = Math.max(1, properties.getInitialPollInterval().toMillis());
+        long maximum = Math.max(initial, properties.getPollInterval().toMillis());
+        long multiplier = 1L << Math.min(Math.max(0, attempt), 10);
+        long adaptive = initial > Long.MAX_VALUE / multiplier ? maximum : initial * multiplier;
+        return Math.min(Math.min(maximum, adaptive), Math.max(0, remainingMillis));
     }
 
     private Duration retryBackoff(int retryCount) {
