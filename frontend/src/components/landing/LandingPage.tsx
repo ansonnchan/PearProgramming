@@ -64,11 +64,11 @@ export function LandingPage({
           <p className="landing-subheading">Pair program together. Real-time coding rooms.</p>
           <h1>
             <span>Code with others in a <strong>pear-ly</strong></span>
-            <span><strong>friendly</strong> browser IDE in real time.</span>
+            <span><strong>friendly</strong> IDE in real time.</span>
           </h1>
           <p className="landing-lede">
             PearProgramming is a collaborative coding platform where teams can write code together in real time,
-            chat alongside their work, and stay in sync in a shared browser IDE. Rooms are limited to five pears for smooth collaboration.
+            chat alongside their work, and stay in sync in a shared browser IDE. Rooms are limited to <strong> five pears </strong>for smooth collaboration.
           </p>
 
           <h2 className="landing-feature-heading">What makes PearProgramming special?</h2>
