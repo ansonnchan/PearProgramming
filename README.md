@@ -128,6 +128,9 @@ Judge0 language IDs vary between deployments. Compare the backend registry with 
 
 Frontend and backend tests use mocked execution providers, so Judge0 is not required.
 
+Execution latency definitions and repeatable benchmark commands are documented in
+[docs/execution-performance.md](docs/execution-performance.md).
+
 ## Deployment
 
 See [docs/deployment.md](docs/deployment.md) for the production Compose topology, HTTPS/WebSocket routing, secrets, migrations, backups, and recovery.
