@@ -1,6 +1,7 @@
 import { createRef } from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { EXECUTION_LANGUAGES } from '../../language';
 import { EditorWorkspace } from './EditorWorkspace';
 
 vi.mock('@monaco-editor/react', () => ({
@@ -33,6 +34,7 @@ const props = {
   editorStackRef: createRef<HTMLDivElement>(),
   executionError: '',
   executionLanguage: 'javascript' as const,
+  executionLanguages: EXECUTION_LANGUAGES,
   executionResult: null,
   executionSubmitting: false,
   onActiveFileChange: vi.fn(),

@@ -1,7 +1,7 @@
 import Editor, { type OnMount } from '@monaco-editor/react';
 import { Braces, FolderPlus, Upload, UsersRound, X } from 'lucide-react';
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { languageClass, type ExecutionLanguage } from '../../language';
+import { languageClass, type ExecutionLanguage, type ExecutionLanguageOption } from '../../language';
 import type { ExecutionResult, WorkspaceFile } from '../../types';
 import { ExecutionConsole } from '../execution/ExecutionConsole';
 import { ExecutionToolbar } from '../execution/ExecutionToolbar';
@@ -16,6 +16,7 @@ type EditorWorkspaceProps = {
   editorStackRef: RefObject<HTMLDivElement>;
   executionError: string;
   executionLanguage: ExecutionLanguage;
+  executionLanguages: readonly ExecutionLanguageOption[];
   executionResult: ExecutionResult | null;
   executionSubmitting: boolean;
   onActiveFileChange: (fileId: string) => void;
@@ -42,6 +43,7 @@ export function EditorWorkspace({
   editorStackRef,
   executionError,
   executionLanguage,
+  executionLanguages,
   executionResult,
   executionSubmitting,
   onActiveFileChange,
@@ -63,6 +65,7 @@ export function EditorWorkspace({
         activeFile={Boolean(activeFile)}
         consoleOpen={consoleOpen}
         language={executionLanguage}
+        languages={executionLanguages}
         onLanguageChange={onLanguageChange}
         onRun={onRun}
         onToggleConsole={onToggleConsole}

@@ -21,6 +21,7 @@ import {
 } from '../api';
 import { executionLanguageForEditorLanguage, inferLanguage, type ExecutionLanguage } from '../language';
 import { useExecution } from '../execution/useExecution';
+import { useExecutionLanguages } from '../execution/useExecutionLanguages';
 import { createExecutionInput } from '../execution/input';
 import { useAuthSession } from '../auth/useAuthSession';
 import { useRoomConnection } from '../collaboration/useRoomConnection';
@@ -128,6 +129,7 @@ export function IDEApplication() {
   const [connectionId] = useState(() => getOrCreateConnectionId());
   const [editorMountVersion, setEditorMountVersion] = useState(0);
   const [executionLanguage, setExecutionLanguage] = useState<ExecutionLanguage>('javascript');
+  const executionLanguages = useExecutionLanguages(Boolean(user.id));
   const addSystemMessageRef = useRef<(message: string) => void>(() => undefined);
   const {
     consoleHeight,
@@ -376,11 +378,17 @@ export function IDEApplication() {
   }, [activeFile]);
 
   useEffect(() => {
-    const inferred = executionLanguageForEditorLanguage(activeFile?.language);
+    const inferred = executionLanguageForEditorLanguage(activeFile?.language, executionLanguages);
     if (inferred) {
       setExecutionLanguage(inferred);
     }
-  }, [activeFile?.id, activeFile?.language]);
+  }, [activeFile?.id, activeFile?.language, executionLanguages]);
+
+  useEffect(() => {
+    if (!executionLanguages.some((option) => option.id === executionLanguage)) {
+      setExecutionLanguage(executionLanguages[0]?.id ?? 'javascript');
+    }
+  }, [executionLanguage, executionLanguages]);
 
   useEffect(() => {
     if (folderInputRef.current) {
@@ -655,6 +663,7 @@ export function IDEApplication() {
           editorStackRef={editorStackRef}
           executionError={executionError}
           executionLanguage={executionLanguage}
+          executionLanguages={executionLanguages}
           executionResult={executionResult}
           executionSubmitting={executionSubmitting}
           onActiveFileChange={setActiveFileId}

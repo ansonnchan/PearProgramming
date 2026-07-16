@@ -1,10 +1,11 @@
 import { Play, SquareTerminal } from 'lucide-react';
-import { EXECUTION_LANGUAGES, type ExecutionLanguage } from '../../language';
+import type { ExecutionLanguage, ExecutionLanguageOption } from '../../language';
 
 type ExecutionToolbarProps = {
   activeFile: boolean;
   consoleOpen: boolean;
   language: ExecutionLanguage;
+  languages: readonly ExecutionLanguageOption[];
   onLanguageChange: (language: ExecutionLanguage) => void;
   onRun: () => void;
   onToggleConsole: () => void;
@@ -15,6 +16,7 @@ export function ExecutionToolbar({
   activeFile,
   consoleOpen,
   language,
+  languages,
   onLanguageChange,
   onRun,
   onToggleConsole,
@@ -36,7 +38,7 @@ export function ExecutionToolbar({
       <label className="execution-language-label">
         <span>Language</span>
         <select disabled={submitting} onChange={(event) => onLanguageChange(event.target.value as ExecutionLanguage)} value={language}>
-          {EXECUTION_LANGUAGES.map((option) => (
+          {languages.map((option) => (
             <option key={option.id} value={option.id}>{option.label}</option>
           ))}
         </select>

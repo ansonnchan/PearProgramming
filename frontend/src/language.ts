@@ -17,6 +17,7 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   cxx: 'cpp',
   dart: 'dart',
   env: 'ini',
+  go: 'go',
   h: 'c',
   hh: 'cpp',
   hpp: 'cpp',
@@ -80,21 +81,44 @@ export const EXECUTION_LANGUAGES = [
   { id: 'kotlin', label: 'Kotlin' },
   { id: 'swift', label: 'Swift' },
   { id: 'r', label: 'R' },
-  { id: 'shell', label: 'Shell' },
-  { id: 'markdown', label: 'Markdown' },
-  { id: 'cpp', label: 'C++' },
+  { id: 'shell', label: 'Shell' }
 ] as const;
 
 export type ExecutionLanguage = typeof EXECUTION_LANGUAGES[number]['id'];
+export type ExecutionLanguageOption = {
+  id: ExecutionLanguage;
+  label: string;
+};
 
-export function executionLanguageForEditorLanguage(language?: string): ExecutionLanguage | null {
-  if (!language) {
+const EXECUTION_LANGUAGE_IDS = new Set<string>(EXECUTION_LANGUAGES.map((language) => language.id));
+
+export function isExecutionLanguage(language: string): language is ExecutionLanguage {
+  return EXECUTION_LANGUAGE_IDS.has(language);
+}
+
+export function normalizeExecutionLanguageOptions(
+  options: readonly { id: string; label: string }[]
+): ExecutionLanguageOption[] {
+  const seen = new Set<ExecutionLanguage>();
+  return options.flatMap((option) => {
+    const id = option.id.trim().toLowerCase();
+    const label = option.label.trim();
+    if (!isExecutionLanguage(id) || !label || seen.has(id)) {
+      return [];
+    }
+    seen.add(id);
+    return [{ id, label }];
+  });
+}
+
+export function executionLanguageForEditorLanguage(
+  language?: string,
+  supportedLanguages: readonly ExecutionLanguageOption[] = EXECUTION_LANGUAGES
+): ExecutionLanguage | null {
+  if (!language || !isExecutionLanguage(language)) {
     return null;
   }
-  if (language === 'java' || language === 'python' || language === 'javascript' || language === 'c' || language === 'cpp') {
-    return language;
-  }
-  return null;
+  return supportedLanguages.some((option) => option.id === language) ? language : null;
 }
 
 export function inferLanguage(path: string) {

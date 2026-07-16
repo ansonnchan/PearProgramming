@@ -1,11 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { EXECUTION_LANGUAGES } from '../../language';
 import { ExecutionToolbar } from './ExecutionToolbar';
 
 const props = {
   activeFile: true,
   consoleOpen: true,
   language: 'javascript' as const,
+  languages: EXECUTION_LANGUAGES,
   onLanguageChange: vi.fn(),
   onRun: vi.fn(),
   onToggleConsole: vi.fn(),
@@ -40,5 +42,16 @@ describe('ExecutionToolbar', () => {
 
     rerender(<ExecutionToolbar {...props} language="java" />);
     expect(screen.getByText('Java entry class: Main')).toBeInTheDocument();
+  });
+
+  it('renders only the languages supplied by the backend catalog', () => {
+    render(<ExecutionToolbar {...props} languages={[
+      { id: 'python', label: 'Python' },
+      { id: 'rust', label: 'Rust' }
+    ]} />);
+
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+    expect(screen.getByRole('option', { name: 'Rust' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'JavaScript' })).not.toBeInTheDocument();
   });
 });

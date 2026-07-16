@@ -130,6 +130,7 @@ Caddy's `caddy-data` volume contains certificate state. Losing it does not lose 
 ## Failure recovery
 
 - **Judge0 unavailable:** collaboration remains available. Execution workers use bounded retries and deadlines; restore provider connectivity and rerun code.
+- **Judge0 language mismatch:** compare the configured provider's `GET /languages` response with `ExecutionLanguageRegistry`. The frontend reads Pear Programming's authenticated `/api/execution/languages` catalog, but provider-specific numeric IDs still need to match the deployed Judge0 instance.
 - **Redis unavailable:** realtime `/readyz` becomes unhealthy and new execution submission fails closed. Restore Redis before restarting dependent services.
 - **PostgreSQL unavailable:** Spring cannot start safely. Restore the database and verify Flyway history before bringing the stack up.
 - **Realtime restart:** SIGTERM stops readiness, closes clients with a restart code, attempts a final PostgreSQL snapshot flush, and closes Redis connections. Browsers reconnect through Yjs.

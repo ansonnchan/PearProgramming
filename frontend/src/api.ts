@@ -1,4 +1,5 @@
 import type { AiAnnotation, AuthSession, BootstrapResponse, ChatMessage, ExecutionResult, Room, RoomAccess, RoomCreateResponse, RoomJoinResponse, Workspace, WorkspaceFile } from './types';
+import type { ExecutionLanguageOption } from './language';
 import type { UploadCandidate } from './uploads';
 import { getOptionalUrlEnv, getRequiredUrlEnv, logResolvedFrontendEnv } from './env';
 
@@ -123,6 +124,10 @@ export async function submitExecution(
 export async function getExecution(roomCode: string, executionId: string): Promise<ExecutionResult> {
   return requestJson<ExecutionResult>('GET', `/api/rooms/${encodeURIComponent(roomCode)}/executions/${encodeURIComponent(executionId)}`, undefined, {
   });
+}
+
+export async function getExecutionLanguages(): Promise<ExecutionLanguageOption[]> {
+  return getJson<ExecutionLanguageOption[]>('/api/execution/languages');
 }
 
 export async function signInGuest(displayName: string, avatarUrl?: string): Promise<AuthSession> {

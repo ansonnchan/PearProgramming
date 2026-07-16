@@ -232,13 +232,26 @@ The queue uses Redis sorted sets rather than Redis Streams because jobs need bot
 
 ### Supported languages
 
-Judge0 IDs are centralized in `ExecutionLanguageRegistry`; clients submit language names, never provider IDs.
+Judge0 IDs are centralized in `ExecutionLanguageRegistry`; clients submit language names, never provider IDs. The authenticated `GET /api/execution/languages` endpoint exposes the same ordered catalog to the frontend so the Run selector and backend allowlist remain synchronized.
 
 - Java (`Main` class required)
 - Python
 - JavaScript / Node.js
 - C
 - C++
+- TypeScript
+- SQL (SQLite)
+- C#
+- PHP
+- Ruby
+- Go
+- Rust
+- Kotlin
+- Swift
+- R
+- Shell (Bash)
+
+Markdown and other Monaco-only languages remain editable and syntax highlighted, but are not offered as executable runtimes.
 
 ### Backend environment variables
 
@@ -274,7 +287,7 @@ Judge0 IDs are centralized in `ExecutionLanguageRegistry`; clients submit langua
 - HTTP sessions and opaque Yjs access tokens are process-local. Multi-instance backend deployment therefore requires sticky sessions until Phase 2/4 moves session/token state to a shared store or replaces the token with an appropriately signed credential.
 - When `INTERNAL_SERVICE_TOKEN` is blank, `/internal/**` accepts only direct loopback traffic for convenient local development. Container or hosted deployments must configure the same secret on Spring and Node; do not expose internal routes directly at an ingress.
 - Code execution fails closed with HTTP `503` when Redis coordination is unavailable. Collaborative editing can continue, but Run cannot safely enqueue shared work until Redis recovers.
-- Judge0 language IDs can differ across customized deployments. The included mapping targets standard Judge0 CE IDs for the five supported languages; update the centralized registry if the provider’s language catalog differs.
+- Judge0 language IDs can differ across customized deployments. The included mapping targets broadly available Judge0 CE runtime IDs while preserving the original five runtime versions. Compare the mapping with the configured provider’s `GET /languages` response before deployment and update the centralized registry when catalogs differ.
 
 ### Testing execution
 

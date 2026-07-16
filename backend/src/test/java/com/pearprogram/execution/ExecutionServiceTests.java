@@ -66,7 +66,7 @@ class ExecutionServiceTests {
 
     @Test
     void rejectsUnsupportedLanguageAndOversizedInputs() {
-        assertApiError(HttpStatus.BAD_REQUEST, () -> submit("bad-language", "ruby", "puts 1", ""));
+        assertApiError(HttpStatus.BAD_REQUEST, () -> submit("bad-language", "markdown", "# title", ""));
 
         properties.setMaxSourceBytes(3);
         assertApiError(HttpStatus.PAYLOAD_TOO_LARGE, () -> submit("big-source", "python", "print(1)", ""));
