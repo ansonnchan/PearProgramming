@@ -32,6 +32,7 @@ public class ExecutionService {
     private final ExecutionProperties properties;
     private final EphemeralRoomStateService roomState;
     private final ExecutionCoordinator coordinator;
+    private final ExecutionMetrics metrics;
     private final ThreadPoolExecutor executor;
     private final AtomicInteger activeWorkers = new AtomicInteger();
     private final AtomicBoolean acceptingWork = new AtomicBoolean(true);
@@ -42,13 +43,15 @@ public class ExecutionService {
             ExecutionLanguageRegistry languages,
             ExecutionProperties properties,
             EphemeralRoomStateService roomState,
-            ExecutionCoordinator coordinator
+            ExecutionCoordinator coordinator,
+            ExecutionMetrics metrics
     ) {
         this.provider = provider;
         this.languages = languages;
         this.properties = properties;
         this.roomState = roomState;
         this.coordinator = coordinator;
+        this.metrics = metrics;
         int threads = Math.max(1, properties.getWorkerThreads());
         this.executor = new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(threads), runnable -> {
@@ -93,8 +96,10 @@ public class ExecutionService {
         if (!acceptingWork.get()) return;
         int capacity = Math.max(1, properties.getWorkerThreads());
         while (activeWorkers.get() < capacity) {
-            Optional<ExecutionJob> claimed = coordinator.claim(workerId, Instant.now(), properties.getWorkerLease());
+            Instant claimedAt = Instant.now();
+            Optional<ExecutionJob> claimed = coordinator.claim(workerId, claimedAt, properties.getWorkerLease());
             if (claimed.isEmpty()) return;
+            metrics.recordQueueWait(claimed.get(), claimedAt);
             activeWorkers.incrementAndGet();
             try {
                 executor.execute(() -> {
@@ -112,8 +117,15 @@ public class ExecutionService {
     @Scheduled(fixedDelayString = "${pearprogram.execution.worker-recovery-interval:5s}")
     void recoverStaleWork() {
         if (!acceptingWork.get()) return;
-        int recovered = coordinator.recoverExpiredLeases(Instant.now(), "Execution could not be recovered after repeated worker failures.", properties.getRecordTtl());
-        if (recovered > 0) log.warn("Recovered stale execution leases count={} workerId={}", recovered, workerId);
+        ExecutionRecoveryBatch recovered = coordinator.recoverExpiredLeases(
+                Instant.now(),
+                "Execution could not be recovered after repeated worker failures.",
+                properties.getRecordTtl()
+        );
+        metrics.recordRecovery(recovered);
+        if (recovered.recoveredCount() > 0) {
+            log.warn("Recovered stale execution leases count={} workerId={}", recovered.recoveredCount(), workerId);
+        }
     }
 
     private void execute(ExecutionJob claimed) {
@@ -122,12 +134,12 @@ public class ExecutionService {
         boolean terminal = false;
         try {
             if (Instant.now().isAfter(claimed.deadline())) {
-                coordinator.fail(executionId, ExecutionStatus.TIMED_OUT, "Execution exceeded its deadline.", elapsedMs(startedAt), properties.getRecordTtl());
+                fail(claimed, ExecutionStatus.TIMED_OUT, "Execution exceeded its deadline.", startedAt);
                 terminal = true;
                 return;
             }
             if (!roomState.roomExists(claimed.roomCode())) {
-                coordinator.fail(executionId, ExecutionStatus.CANCELLED, "The room was closed before execution completed.", elapsedMs(startedAt), properties.getRecordTtl());
+                fail(claimed, ExecutionStatus.CANCELLED, "The room was closed before execution completed.", startedAt);
                 terminal = true;
                 return;
             }
@@ -141,25 +153,28 @@ public class ExecutionService {
 
             for (int attempt = 0; attempt < Math.max(1, properties.getMaxPollAttempts()); attempt++) {
                 if (Instant.now().isAfter(claimed.deadline())) {
-                    coordinator.fail(executionId, ExecutionStatus.TIMED_OUT, "Execution exceeded its deadline.", elapsedMs(startedAt), properties.getRecordTtl());
+                    fail(claimed, ExecutionStatus.TIMED_OUT, "Execution exceeded its deadline.", startedAt);
                     terminal = true;
                     return;
                 }
                 if (!roomState.roomExists(claimed.roomCode())) {
-                    coordinator.fail(executionId, ExecutionStatus.CANCELLED, "The room was closed before execution completed.", elapsedMs(startedAt), properties.getRecordTtl());
+                    fail(claimed, ExecutionStatus.CANCELLED, "The room was closed before execution completed.", startedAt);
                     terminal = true;
                     return;
                 }
                 if (!coordinator.renewLease(executionId, workerId, Instant.now().plus(properties.getWorkerLease()))) return;
                 ProviderExecutionResult result = provider.getResult(token);
-                coordinator.applyResult(executionId, result, properties.getRecordTtl());
+                boolean applied = coordinator.applyResult(executionId, result, properties.getRecordTtl());
                 if (result.status().isTerminal()) {
+                    if (applied) {
+                        metrics.recordCompletion(claimed, result.status(), result.durationMs(), Instant.now());
+                    }
                     terminal = true;
                     return;
                 }
                 sleepUntilNextPoll(claimed.deadline());
             }
-            coordinator.fail(executionId, ExecutionStatus.TIMED_OUT, "Execution did not finish before the polling limit.", elapsedMs(startedAt), properties.getRecordTtl());
+            fail(claimed, ExecutionStatus.TIMED_OUT, "Execution did not finish before the polling limit.", startedAt);
             terminal = true;
         } catch (ExecutionProviderException exception) {
             log.warn("Execution provider failure executionId={} retry={} transient={} reason={}", executionId,
@@ -170,14 +185,14 @@ public class ExecutionService {
                         PROVIDER_UNAVAILABLE, properties.getRecordTtl());
                 terminal = result == ExecutionRescheduleResult.RETRIES_EXHAUSTED;
             } else {
-                coordinator.fail(executionId, ExecutionStatus.FAILED,
+                fail(claimed, ExecutionStatus.FAILED,
                         exception.isTransientFailure() ? PROVIDER_UNAVAILABLE : "The execution provider returned an invalid response.",
-                        elapsedMs(startedAt), properties.getRecordTtl());
+                        startedAt);
                 terminal = true;
             }
         } catch (RuntimeException exception) {
             log.error("Unexpected execution failure executionId={}", executionId, exception);
-            coordinator.fail(executionId, ExecutionStatus.FAILED, "Execution failed because of an internal error.", elapsedMs(startedAt), properties.getRecordTtl());
+            fail(claimed, ExecutionStatus.FAILED, "Execution failed because of an internal error.", startedAt);
             terminal = true;
         } finally {
             if (terminal) coordinator.acknowledge(executionId, workerId);
@@ -237,6 +252,13 @@ public class ExecutionService {
     }
 
     private long elapsedMs(long startedAt) { return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt); }
+
+    private void fail(ExecutionJob job, ExecutionStatus status, String message, long startedAt) {
+        if (coordinator.fail(job.executionId(), status, message, elapsedMs(startedAt), properties.getRecordTtl())) {
+            metrics.recordCompletion(job, status, null, Instant.now());
+        }
+    }
+
     private ExecutionApiException unavailable() { return new ExecutionApiException(HttpStatus.SERVICE_UNAVAILABLE, "execution_service_unavailable", "Code execution is temporarily unavailable."); }
 
     @PreDestroy

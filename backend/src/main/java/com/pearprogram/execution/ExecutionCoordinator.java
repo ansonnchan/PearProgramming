@@ -29,7 +29,7 @@ interface ExecutionCoordinator {
 
     void acknowledge(UUID executionId, String workerId);
 
-    int recoverExpiredLeases(Instant now, String safeFailureMessage, Duration ttl);
+    ExecutionRecoveryBatch recoverExpiredLeases(Instant now, String safeFailureMessage, Duration ttl);
 
     long queueDepth();
 

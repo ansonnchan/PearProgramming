@@ -278,22 +278,34 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
     }
 
     @Override
-    public int recoverExpiredLeases(Instant now, String message, Duration ttl) {
+    public ExecutionRecoveryBatch recoverExpiredLeases(Instant now, String message, Duration ttl) {
         try {
-            Set<String> expired = redis.opsForZSet().rangeByScore(leasesKey(), 0, now.toEpochMilli(), 0, 100);
-            if (expired == null) return 0;
-            int recovered = 0;
-            for (String id : new ArrayList<>(expired)) {
+            Set<ZSetOperations.TypedTuple<String>> expired = redis.opsForZSet()
+                    .rangeByScoreWithScores(leasesKey(), 0, now.toEpochMilli(), 0, 100);
+            if (expired == null) return ExecutionRecoveryBatch.empty();
+            List<ExecutionRecoveryBatch.RecoveredLease> recovered = new ArrayList<>();
+            for (ZSetOperations.TypedTuple<String> candidate : expired) {
+                String id = candidate.getValue();
+                if (id == null) continue;
                 UUID executionId;
                 try { executionId = UUID.fromString(id); } catch (IllegalArgumentException ignored) { redis.opsForZSet().remove(leasesKey(), id); continue; }
                 Long result = redis.execute(RECOVER, List.of(queueKey(), leasesKey(), jobKey(executionId), recordKey(executionId)), id,
                         Long.toString(now.toEpochMilli()), message, Long.toString(now.toEpochMilli()), Long.toString(ttl.toMillis()));
-                if (result != null && result > 0) recovered++;
+                if (result != null && result > 0) {
+                    long expiredAt = candidate.getScore() == null ? now.toEpochMilli() : candidate.getScore().longValue();
+                    recovered.add(new ExecutionRecoveryBatch.RecoveredLease(
+                            executionId,
+                            Duration.ofMillis(Math.max(0, now.toEpochMilli() - expiredAt)),
+                            result == 1
+                                    ? ExecutionRecoveryBatch.Outcome.REQUEUED
+                                    : ExecutionRecoveryBatch.Outcome.FINALIZED
+                    ));
+                }
             }
-            return recovered;
+            return new ExecutionRecoveryBatch(recovered);
         } catch (DataAccessException exception) {
             warnBackgroundUnavailable("lease-recovery", exception);
-            return 0;
+            return ExecutionRecoveryBatch.empty();
         }
     }
 

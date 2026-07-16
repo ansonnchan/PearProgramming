@@ -121,16 +121,27 @@ final class TestExecutionCoordinator implements ExecutionCoordinator {
     }
 
     @Override
-    public synchronized int recoverExpiredLeases(Instant now, String message, Duration ttl) {
-        List<UUID> expired = leases.entrySet().stream().filter(entry -> !entry.getValue().isAfter(now)).map(Map.Entry::getKey).toList();
-        int recovered = 0;
-        for (UUID id : expired) {
+    public synchronized ExecutionRecoveryBatch recoverExpiredLeases(Instant now, String message, Duration ttl) {
+        List<Map.Entry<UUID, Instant>> expired = leases.entrySet().stream()
+                .filter(entry -> !entry.getValue().isAfter(now))
+                .toList();
+        List<ExecutionRecoveryBatch.RecoveredLease> recovered = new ArrayList<>();
+        for (Map.Entry<UUID, Instant> expiredLease : expired) {
+            UUID id = expiredLease.getKey();
             ExecutionJob job = jobs.get(id);
             if (job == null) continue;
             ExecutionRescheduleResult result = reschedule(id, job.leaseOwner(), now, message, ttl);
-            if (result != ExecutionRescheduleResult.LEASE_LOST) recovered++;
+            if (result != ExecutionRescheduleResult.LEASE_LOST) {
+                recovered.add(new ExecutionRecoveryBatch.RecoveredLease(
+                        id,
+                        Duration.between(expiredLease.getValue(), now),
+                        result == ExecutionRescheduleResult.RESCHEDULED
+                                ? ExecutionRecoveryBatch.Outcome.REQUEUED
+                                : ExecutionRecoveryBatch.Outcome.FINALIZED
+                ));
+            }
         }
-        return recovered;
+        return new ExecutionRecoveryBatch(recovered);
     }
 
     @Override

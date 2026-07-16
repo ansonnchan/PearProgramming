@@ -46,7 +46,7 @@ class RedisExecutionCoordinatorTests {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         @SuppressWarnings("unchecked") ZSetOperations<String, String> zsets = mock(ZSetOperations.class);
         when(redis.opsForZSet()).thenReturn(zsets);
-        when(zsets.rangeByScore(any(String.class), anyDouble(), anyDouble(), anyLong(), anyLong()))
+        when(zsets.rangeByScoreWithScores(any(String.class), anyDouble(), anyDouble(), anyLong(), anyLong()))
                 .thenThrow(new DataAccessResourceFailureException("offline"));
         RedisExecutionCoordinator coordinator = new RedisExecutionCoordinator(redis, "pearprogram-test");
 

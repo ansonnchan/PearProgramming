@@ -30,7 +30,7 @@ class ExecutionCoordinatorTests {
         coordinator.claim("crashed", Instant.now(), Duration.ZERO);
         coordinator.saveProviderToken(job.executionId(), "crashed", "judge-token", ttl);
 
-        assertThat(coordinator.recoverExpiredLeases(Instant.now().plusMillis(1), "failed", ttl)).isEqualTo(1);
+        assertThat(coordinator.recoverExpiredLeases(Instant.now().plusMillis(1), "failed", ttl).recoveredCount()).isEqualTo(1);
         ExecutionJob recovered = coordinator.claim("replacement", Instant.now().plusMillis(2), Duration.ofSeconds(10)).orElseThrow();
         assertThat(recovered.providerToken()).isEqualTo("judge-token");
         assertThat(recovered.retryCount()).isEqualTo(1);
@@ -62,7 +62,7 @@ class ExecutionCoordinatorTests {
         coordinator.claim("worker-a", now.plusSeconds(1), Duration.ofMillis(1));
         coordinator.renewLease(job.executionId(), "worker-a", now.plusSeconds(30));
 
-        assertThat(coordinator.recoverExpiredLeases(now.plusSeconds(2), "failed", ttl)).isZero();
+        assertThat(coordinator.recoverExpiredLeases(now.plusSeconds(2), "failed", ttl).recoveredCount()).isZero();
         assertThat(coordinator.claim("worker-b", now.plusSeconds(2), Duration.ofSeconds(1))).isEmpty();
     }
 

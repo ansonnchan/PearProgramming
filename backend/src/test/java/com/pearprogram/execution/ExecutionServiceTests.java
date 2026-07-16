@@ -1,6 +1,7 @@
 package com.pearprogram.execution;
 
 import com.pearprogram.rooms.EphemeralRoomStateService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ class ExecutionServiceTests {
     private FakeProvider provider;
     private ExecutionService service;
     private TestExecutionCoordinator coordinator;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
@@ -40,7 +42,9 @@ class ExecutionServiceTests {
         properties.setRateLimitPerMinute(20);
         provider = new FakeProvider();
         coordinator = new TestExecutionCoordinator();
-        service = new ExecutionService(provider, new ExecutionLanguageRegistry(), properties, roomState, coordinator);
+        meterRegistry = new SimpleMeterRegistry();
+        service = new ExecutionService(provider, new ExecutionLanguageRegistry(), properties, roomState, coordinator,
+                new ExecutionMetrics(meterRegistry, coordinator));
         roomState.roomExists = true;
         roomState.activeMember = true;
     }
@@ -182,12 +186,35 @@ class ExecutionServiceTests {
         coordinator.saveProviderToken(id, "crashed", "existing-token", properties.getRecordTtl());
         coordinator.recoverExpiredLeases(now.plusMillis(1), "failed", properties.getRecordTtl());
         provider.results.add(new ProviderExecutionResult(ExecutionStatus.COMPLETED, "ok", null, null, 0, 1L, null));
-        service = new ExecutionService(provider, new ExecutionLanguageRegistry(), properties, roomState, coordinator);
+        meterRegistry = new SimpleMeterRegistry();
+        service = new ExecutionService(provider, new ExecutionLanguageRegistry(), properties, roomState, coordinator,
+                new ExecutionMetrics(meterRegistry, coordinator));
 
         ExecutionResponse completed = awaitTerminal(id);
         assertThat(completed.status()).isEqualTo(ExecutionStatus.COMPLETED);
         assertThat(provider.submissions).hasValue(0);
         assertThat(provider.polls).hasValue(1);
+    }
+
+    @Test
+    void recordsQueueEndToEndOverheadAndRecoveryMetrics() {
+        provider.results.add(new ProviderExecutionResult(ExecutionStatus.COMPLETED, "ok", null, null, 0, 0L, null));
+        ExecutionResponse completed = awaitTerminal(submit("metrics", "python", "print(1)", "").executionId());
+
+        assertThat(completed.status()).isEqualTo(ExecutionStatus.COMPLETED);
+        assertThat(meterRegistry.get(ExecutionMetrics.QUEUE_WAIT).timer().count()).isEqualTo(1);
+        assertThat(meterRegistry.get(ExecutionMetrics.END_TO_END).tag("status", "completed").timer().count()).isEqualTo(1);
+        assertThat(meterRegistry.get(ExecutionMetrics.ORCHESTRATION_OVERHEAD).tag("status", "completed").timer().count()).isEqualTo(1);
+
+        Instant now = Instant.now();
+        ExecutionJob abandoned = new ExecutionJob(UUID.randomUUID(), "ABC123", "user-1", 71, "print(2)", "", now,
+                now.plusSeconds(10), 0, 3, "", "");
+        coordinator.create(abandoned, "recovery-metrics", properties.getRecordTtl(), 20);
+        coordinator.claim("crashed", now, Duration.ZERO);
+        service.recoverStaleWork();
+
+        assertThat(meterRegistry.get(ExecutionMetrics.RECOVERIES).tag("outcome", "requeued").counter().count()).isEqualTo(1);
+        assertThat(meterRegistry.get(ExecutionMetrics.RECOVERY_DETECTION_DELAY).tag("outcome", "requeued").timer().count()).isEqualTo(1);
     }
 
     @Test
