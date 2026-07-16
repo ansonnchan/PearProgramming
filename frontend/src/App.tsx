@@ -2,21 +2,29 @@ import Editor, { type OnMount } from '@monaco-editor/react';
 import { Client } from '@stomp/stompjs';
 import {
   Bot,
+  Braces,
   Check,
+  ChevronDown,
   Copy,
   Download,
   FilePlus2,
   Folder,
   FolderPlus,
   ImagePlus,
-  MessageSquare,
+  Leaf,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightOpen,
+  Plus,
+  Settings,
   Upload,
+  UsersRound,
   UserRound,
   Wifi,
   WifiOff,
   X
 } from 'lucide-react';
-import { type DragEvent, type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import {
@@ -46,8 +54,9 @@ import { useRoomConnection } from './collaboration/useRoomConnection';
 import { useCollaborativeDocument } from './collaboration/useCollaborativeDocument';
 import { FileTree } from './components/file-tree/FileTree';
 import { ChatPanel, type DisplayChatMessage, type MentionOption } from './components/chat/ChatPanel';
+import { insertMentionText } from './components/chat/mention';
+import { LandingPage } from './components/landing/LandingPage';
 import pearLogoUrl from '../assets/favicon.png';
-import pearChibiUrl from '../assets/pear_chibi.jpg';
 import type { UploadCandidate, UploadReadResult } from './uploads';
 import { projectNameForPaths, readDroppedUploadCandidates, readUploadCandidates, UPLOAD_ACCEPT } from './uploads';
 import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEvent, Room, RoomSessionState, WorkspaceFile } from './types';
@@ -55,7 +64,12 @@ import type { AiAnnotation, ChatMessage, CursorMessage, Member, ProjectSwitchEve
 const DEFAULT_COLOR = '#000000';
 const ROOM_SESSION_STORAGE_KEY = 'pearprogram-room-session';
 const CONNECTION_SESSION_STORAGE_KEY = 'pearprogram-connection-session';
+const CONSOLE_HEIGHT_STORAGE_KEY = 'pearprogram-console-height';
 const CONTENT_SYNC_DELAY_MS = 250;
+const DEFAULT_CONSOLE_HEIGHT = 250;
+const MIN_CONSOLE_HEIGHT = 160;
+const MAX_CONSOLE_HEIGHT = 520;
+const MIN_EDITOR_HEIGHT = 170;
 const BACKEND_WAKE_URL = buildWakeUrl(API_BASE_URL, '/healthz');
 const REALTIME_WAKE_URL = 'https://pear-program-realtime.onrender.com/health';
 
@@ -112,8 +126,6 @@ export default function App() {
   const [presenceMembers, setPresenceMembers] = useState<Record<string, Member>>({});
   const [chatDraft, setChatDraft] = useState('');
   const [chatError, setChatError] = useState('');
-  const [mentionState, setMentionState] = useState({ open: false, query: '', start: 0, end: 0 });
-  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [cursorPosition, setCursorPosition] = useState({ line: 1, col: 1 });
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [landingCode, setLandingCode] = useState('');
@@ -134,6 +146,7 @@ export default function App() {
   const [roomLocked, setRoomLocked] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [pearMenuOpen, setPearMenuOpen] = useState(false);
+  const [explorerCreateOpen, setExplorerCreateOpen] = useState(false);
   const [delegateOpen, setDelegateOpen] = useState(false);
   const [delegateUserId, setDelegateUserId] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
@@ -151,8 +164,9 @@ export default function App() {
   const [connectionId] = useState(() => getOrCreateConnectionId());
   const [editorMountVersion, setEditorMountVersion] = useState(0);
   const [executionLanguage, setExecutionLanguage] = useState<ExecutionLanguage>('javascript');
-  const [executionStdin, setExecutionStdin] = useState('');
   const [executionPanelOpen, setExecutionPanelOpen] = useState(true);
+  const [consoleHeight, setConsoleHeight] = useState(loadConsoleHeight);
+  const [consoleResizing, setConsoleResizing] = useState(false);
 
   const openFiles = openFileIds
     .map((fileId) => files.find((file) => file.id === fileId))
@@ -165,14 +179,14 @@ export default function App() {
   const humanMembers = uniqueMembers([user, ...Object.values(presenceMembers), ...remoteMembers]);
   const members = uniqueMembers([...humanMembers, { id: 'ai', name: 'AI', color: '#8B5CF6', ai: true }]);
   const mentionOptions = buildMentionOptions(members);
-  const filteredMentionOptions = mentionState.open
-    ? mentionOptions.filter((option) => mentionMatches(option, mentionState.query)).slice(0, 6)
-    : [];
   const isLeadPear = leadUserId === user.id;
   const roleLabel = isLeadPear ? 'Lead Pear' : 'Junior Pear';
   const delegateCandidates = humanMembers.filter((member) => member.id !== user.id);
+  const visibleMembers = members.slice(0, 4);
+  const hiddenMemberCount = Math.max(0, members.length - visibleMembers.length);
 
   const editorRef = useRef<unknown>(null);
+  const editorStackRef = useRef<HTMLDivElement | null>(null);
   const monacoRef = useRef<any>(null);
   const cursorWidgetsRef = useRef<Map<string, any>>(new Map());
   const annotationWidgetsRef = useRef<Map<string, any>>(new Map());
@@ -197,7 +211,7 @@ export default function App() {
   const seedingFileIdsRef = useRef<Set<string>>(new Set());
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const chatInputRef = useRef<HTMLInputElement | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const entryAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const bootstrappedRoomRef = useRef(false);
@@ -296,11 +310,11 @@ export default function App() {
       inherit: true,
       rules: [],
       colors: {
-        'editor.background': '#0d1117',
-        'editorGutter.background': '#0d1117',
-        'editorLineNumber.foreground': '#5f6b7a',
+        'editor.background': '#1a1c18',
+        'editorGutter.background': '#1a1c18',
+        'editorLineNumber.foreground': '#77796e',
         'editorCursor.foreground': '#58a6ff',
-        'editor.selectionBackground': '#264f78'
+        'editor.selectionBackground': '#3d5261'
       }
     });
     monaco.editor.setTheme('pear-github-dark');
@@ -398,6 +412,14 @@ export default function App() {
     const timer = window.setInterval(() => setPacificNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CONSOLE_HEIGHT_STORAGE_KEY, String(consoleHeight));
+    } catch {
+      // Resizing remains available when local storage is disabled.
+    }
+  }, [consoleHeight]);
 
   useEffect(() => {
     if (!authReady || bootstrappedRoomRef.current) {
@@ -689,17 +711,22 @@ export default function App() {
           <span>PearProgramming</span>
         </button>
         <div className="room-header-center">
-          <button className="room-code-chip" onClick={copyRoomCode} title="Copy room code" type="button">
-            <span>Room Code: {room.code}</span>
-            <Copy size={13} />
-          </button>
-          <span className={`role-chip ${isLeadPear ? 'role-lead' : ''}`}>{roleLabel}</span>
+          <div className="room-code-control" aria-label={`Room code ${room.code}`}>
+            <span className="room-code-label">Room Code:</span>
+            <strong>{room.code}</strong>
+            <button className="room-code-copy" onClick={copyRoomCode} title="Copy room code" type="button">
+              <Copy size={13} />
+              <span>Copy</span>
+            </button>
+          </div>
+          <span className={`role-chip ${isLeadPear ? 'role-lead' : ''}`}>{isLeadPear && <Leaf size={13} />}{roleLabel}</span>
         </div>
         <div className="topbar-actions">
           <div className="collaborators" aria-label="Collaborators">
             <span className="online-dot" />
             <span className="online-count">{Math.max(1, humanMembers.length)} online</span>
-            {members.map((member) => member.id === user.id ? (
+            <div className="avatar-stack">
+              {visibleMembers.map((member) => member.id === user.id ? (
               <button
                 className="avatar avatar-button"
                 key={member.id}
@@ -719,8 +746,13 @@ export default function App() {
               >
                 {member.ai ? <Bot size={13} /> : member.avatarUrl ? <img alt="" src={member.avatarUrl} /> : initials(member.name)}
               </span>
-            ))}
+              ))}
+              {hiddenMemberCount > 0 && <span className="avatar avatar-overflow" title={`${hiddenMemberCount} more collaborators`}>+{hiddenMemberCount}</span>}
+            </div>
           </div>
+          <button aria-label="Profile settings" className="topbar-icon-button" onClick={() => openProfileEditor(user)} title="Profile settings" type="button">
+            <Settings size={16} />
+          </button>
           <div className="pear-menu">
             <button
               aria-expanded={pearMenuOpen}
@@ -729,6 +761,7 @@ export default function App() {
               type="button"
             >
               <span>Pear Menu</span>
+              <ChevronDown size={14} />
             </button>
             {pearMenuOpen && (
               <div className="pear-menu-popover">
@@ -752,31 +785,52 @@ export default function App() {
 
       <section className={workspaceClass}>
         {explorerOpen ? (
-        <aside className="explorer">
+        <aside
+          className={`explorer ${uploadDragging && !uploadModalOpen ? 'explorer-dragging' : ''}`}
+          id="workspace-explorer"
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setUploadDragging(true);
+          }}
+          onDragLeave={(event) => {
+            const nextTarget = event.relatedTarget;
+            if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+              setUploadDragging(false);
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+            setUploadDragging(true);
+          }}
+          onDrop={(event) => void handleUploadDrop(event)}
+        >
           <div className="pane-title-row">
             <span className="pane-title">Explorer</span>
             <div className="icon-row">
-              <button className="icon-button" onClick={handleNewFile} type="button" title="New file">
-                <FilePlus2 size={15} />
-              </button>
-              <button className="icon-button" onClick={handleNewFolder} type="button" title="New folder">
-                <FolderPlus size={15} />
-              </button>
-              <button className="icon-button" disabled={files.length === 0} onClick={exportWorkspace} type="button" title="Download project">
-                <Download size={15} />
-              </button>
-              <button className="icon-button panel-minimize-button" onClick={() => setExplorerOpen(false)} type="button" title="Minimize explorer">
-                -
+              <div className="explorer-create-menu">
+                <button aria-expanded={explorerCreateOpen} aria-label="Create file or folder" className="icon-button explorer-create-button" onClick={() => setExplorerCreateOpen((current) => !current)} title="Create file or folder" type="button">
+                  <Plus size={17} />
+                </button>
+                {explorerCreateOpen && (
+                  <div className="explorer-create-popover">
+                    <button onClick={() => { setExplorerCreateOpen(false); handleNewFile(); }} type="button"><FilePlus2 size={15} /> New file</button>
+                    <button onClick={() => { setExplorerCreateOpen(false); handleNewFolder(); }} type="button"><FolderPlus size={15} /> New folder</button>
+                  </div>
+                )}
+              </div>
+              <button aria-label="Hide explorer" className="icon-button panel-minimize-button" onClick={() => setExplorerOpen(false)} type="button" title="Hide explorer">
+                <PanelLeftClose size={16} />
               </button>
             </div>
           </div>
-          <div className="upload-actions">
-            <button className="upload-button" onClick={openUploadModal} type="button">
-              <Upload size={14} />
+          <div className="explorer-actions" aria-label="Explorer actions">
+            <button className="sidebar-action" onClick={openFilePicker} type="button">
+              <Upload size={15} />
               <span>Upload File</span>
             </button>
-            <button className="upload-button" onClick={openUploadModal} type="button">
-              <FolderPlus size={14} />
+            <button className="sidebar-action" onClick={openFolderPicker} type="button">
+              <FolderPlus size={15} />
               <span>Upload Folder</span>
             </button>
           </div>
@@ -802,18 +856,58 @@ export default function App() {
               </button>
             </div>
           )}
-          <div className="tree"><FileTree activeFileId={activeFile?.id ?? ''} expandedFolders={expandedFolders} files={files}
-            onDeletePath={deleteTreePath} onFileSelect={openFileTab} onToggleFolder={toggleFolder} /></div>
+          <section className="explorer-section workspace-section" aria-labelledby="workspace-section-title">
+            <div className="explorer-section-heading">
+              <span id="workspace-section-title">Workspace</span>
+              <button aria-label="Download project" className="icon-button" disabled={files.length === 0} onClick={exportWorkspace} title="Download project" type="button">
+                <Download size={15} />
+              </button>
+            </div>
+            <div className="workspace-root" title={activeProjectName}>
+              <Folder size={15} />
+              <span>{activeProjectName === 'Empty room' ? 'Room workspace' : activeProjectName}</span>
+            </div>
+            <div className="tree"><FileTree activeFileId={activeFile?.id ?? ''} expandedFolders={expandedFolders} files={files}
+              onDeletePath={deleteTreePath} onFileSelect={openFileTab} onToggleFolder={toggleFolder} /></div>
+          </section>
+          <section className="explorer-section shared-files-section" aria-labelledby="shared-files-title">
+            <div className="explorer-section-heading">
+              <span id="shared-files-title">Shared files</span>
+              {files.length > 0 && <span className="shared-file-count">{files.length}</span>}
+            </div>
+            <div className="shared-files-state">
+              <img alt="" src={pearLogoUrl} />
+              <div>
+                <strong>{files.length > 0 ? `${files.length} ${files.length === 1 ? 'file' : 'files'} shared` : 'No files shared yet'}</strong>
+                <span>{files.length > 0 ? 'Workspace changes sync with every pear.' : 'Drop files here to share them with the room.'}</span>
+              </div>
+            </div>
+          </section>
+          {uploadDragging && !uploadModalOpen && (
+            <div className="explorer-drop-overlay" aria-hidden="true">
+              <Upload size={24} />
+              <strong>Drop to share</strong>
+            </div>
+          )}
         </aside>
         ) : (
           <aside className="explorer-rail">
-            <button className="chat-rail-button" onClick={() => setExplorerOpen(true)} title="Show explorer" type="button">
-              <Folder size={17} />
+            <button aria-controls="workspace-explorer" aria-expanded="false" aria-label="Show explorer" className="panel-rail-button" onClick={() => setExplorerOpen(true)} title="Show explorer" type="button">
+              <PanelLeftOpen size={18} />
             </button>
           </aside>
         )}
 
-        <section className="editor-area">
+        <section className={`editor-area ${consoleResizing ? 'console-resizing' : ''}`}>
+          <ExecutionToolbar
+            activeFile={Boolean(activeFile)}
+            consoleOpen={executionPanelOpen}
+            language={executionLanguage}
+            onLanguageChange={setExecutionLanguage}
+            onRun={() => void runActiveFile()}
+            onToggleConsole={() => setExecutionPanelOpen((current) => !current)}
+            submitting={executionSubmitting}
+          />
           <div className="tabs">
             {openFiles.map((file) => (
               <div className={`tab ${file.id === activeFile?.id ? 'tab-active' : ''}`} key={file.id}>
@@ -827,85 +921,104 @@ export default function App() {
               </div>
             ))}
           </div>
-          <ExecutionToolbar
-            activeFile={Boolean(activeFile)}
-            consoleOpen={executionPanelOpen}
-            language={executionLanguage}
-            onLanguageChange={setExecutionLanguage}
-            onRun={() => void runActiveFile()}
-            onToggleConsole={() => setExecutionPanelOpen((current) => !current)}
-            submitting={executionSubmitting}
-          />
-          <div className="editor-frame">
-            {activeFile ? (
-              <Editor
-                height="100%"
-                language={activeFile.language}
-                onMount={handleEditorMount}
-                options={{
-                  automaticLayout: true,
-                  fontFamily: 'JetBrains Mono, Consolas, monospace',
-                  fontSize: 14,
-                  lineHeight: 22,
-                  minimap: { enabled: false },
-                  padding: { top: 14, bottom: 14 },
-                  scrollBeyondLastLine: false,
-                  tabSize: 2
-                }}
-                path={activeFile.path}
-                theme="pear-github-dark"
-                defaultValue={activeFile.content}
-              />
-            ) : (
-              <div className="empty-editor">
-                <div className="empty-editor-content">
-                  <img alt="" className="empty-pear-idle" src={pearLogoUrl} />
-                  <h1>Upload files or a project folder to start coding together.</h1>
-                  <p>Your shared file tree will appear here after uploading.</p>
-                  <div className="empty-editor-actions">
-                    <button onClick={openUploadModal} type="button">
-                      <Upload size={16} />
-                      Upload Files
-                    </button>
-                    <button onClick={openUploadModal} type="button">
-                      <FolderPlus size={16} />
-                      Upload Folder
-                    </button>
+          <div className="editor-stack" ref={editorStackRef}>
+            <div className="editor-frame">
+              {activeFile ? (
+                <Editor
+                  height="100%"
+                  language={activeFile.language}
+                  onMount={handleEditorMount}
+                  options={{
+                    automaticLayout: true,
+                    fontFamily: 'JetBrains Mono, Consolas, monospace',
+                    fontSize: 14,
+                    lineHeight: 22,
+                    minimap: { enabled: false },
+                    padding: { top: 14, bottom: 14 },
+                    scrollbar: { horizontalScrollbarSize: 10, verticalScrollbarSize: 10 },
+                    scrollBeyondLastLine: false,
+                    tabSize: 2
+                  }}
+                  path={activeFile.path}
+                  theme="pear-github-dark"
+                  defaultValue={activeFile.content}
+                />
+              ) : (
+                <div className="empty-editor">
+                  <div className="empty-editor-content">
+                    <div aria-hidden="true" className="empty-editor-sketch">
+                      <div className="empty-sketch-window">
+                        <div className="empty-sketch-window-bar"><span /><span /><span /><em>shared-room.js</em></div>
+                        <div className="empty-sketch-code">
+                          <span><i>1</i><code>const room = <strong>'together'</strong>;</code></span>
+                          <span><i>2</i><code>shareIdeas(room);</code></span>
+                          <span><i>3</i><code>grow(<strong>'side by side'</strong>);</code></span>
+                        </div>
+                      </div>
+                      <div className="empty-sketch-caption"><Braces size={17} /><span>Pair-ready workspace</span><UsersRound size={17} /></div>
+                    </div>
+                    <h1>Upload files or a project folder to start coding together.</h1>
+                    <p>Your shared file tree will appear here after uploading.</p>
+                    <div className="empty-editor-actions">
+                      <button onClick={openUploadModal} type="button">
+                        <Upload size={16} />
+                        Upload Files
+                      </button>
+                      <button onClick={openUploadModal} type="button">
+                        <FolderPlus size={16} />
+                        Upload Folder
+                      </button>
+                    </div>
                   </div>
                 </div>
+              )}
+            </div>
+            <div
+              aria-hidden={!executionPanelOpen}
+              className={`console-region ${executionPanelOpen ? '' : 'console-region-collapsed'}`}
+              style={{ flexBasis: executionPanelOpen ? `${consoleHeight}px` : '0px' }}
+            >
+              <div
+                aria-controls="execution-console"
+                aria-label="Resize console"
+                aria-orientation="horizontal"
+                aria-valuemax={consoleMaximumHeight()}
+                aria-valuemin={MIN_CONSOLE_HEIGHT}
+                aria-valuenow={Math.min(consoleHeight, consoleMaximumHeight())}
+                className="console-resize-handle"
+                onDoubleClick={() => setConsoleHeight(DEFAULT_CONSOLE_HEIGHT)}
+                onKeyDown={handleConsoleResizeKeyDown}
+                onPointerDown={handleConsoleResizeStart}
+                role="separator"
+                tabIndex={executionPanelOpen ? 0 : -1}
+                title="Drag to resize console; double-click to reset"
+              >
+                <span />
               </div>
-            )}
+              <ExecutionConsole
+                error={executionError}
+                onClear={clearExecutionConsole}
+                onRerun={() => void runActiveFile()}
+                result={executionResult}
+                submitting={executionSubmitting}
+              />
+            </div>
           </div>
-          {executionPanelOpen && (
-            <ExecutionConsole
-              error={executionError}
-              onClear={clearExecutionConsole}
-              onRerun={() => void runActiveFile()}
-              onStdinChange={setExecutionStdin}
-              result={executionResult}
-              stdin={executionStdin}
-              submitting={executionSubmitting}
-            />
-          )}
         </section>
 
         {chatOpen ? (
           <ChatPanel
-            activeMentionIndex={mentionActiveIndex}
             draft={chatDraft}
             error={chatError}
             inputRef={chatInputRef}
-            mentionOptions={filteredMentionOptions}
+            mentionOptions={mentionOptions}
             messages={messages}
             nowLabel={formatPacificTime(pacificNow.toISOString())}
             onClose={() => setChatOpen(false)}
-            onDraftInput={(input) => {
-              setChatDraft(input.value);
+            onDraftChange={(value) => {
+              setChatDraft(value);
               setChatError('');
-              updateMentionState(input);
             }}
-            onInsertMention={insertMentionIntoDraft}
-            onMentionKeyDown={handleMentionKeyDown}
             onSend={sendChat}
             renderContent={(message) => renderMessageContent(message.content, mentionOptions, insertMentionIntoDraft)}
             user={user}
@@ -913,8 +1026,8 @@ export default function App() {
           />
         ) : (
           <aside className="chat-rail">
-            <button className="chat-rail-button" onClick={() => setChatOpen(true)} title="Show chat" type="button">
-              <MessageSquare size={17} />
+            <button aria-controls="room-chat" aria-expanded="false" aria-label="Show room chat" className="panel-rail-button" onClick={() => setChatOpen(true)} title="Show room chat" type="button">
+              <PanelRightOpen size={18} />
             </button>
           </aside>
         )}
@@ -1155,7 +1268,6 @@ export default function App() {
       return;
     }
 
-    setMentionState((current) => ({ ...current, open: false }));
     setChatError('');
     const mentionsAi = content.toUpperCase().includes('@AI');
     if (stompClient?.connected) {
@@ -1211,78 +1323,86 @@ export default function App() {
       fallbackSourceCode: currentFile.content,
       roomCode: currentRoom.code,
       language: executionLanguage,
-      stdin: executionStdin
+      stdin: ''
     }));
   }
 
-  function updateMentionState(input: HTMLInputElement) {
-    const cursor = input.selectionStart ?? input.value.length;
-    const fragment = mentionFragmentAt(input.value, cursor);
-    if (!fragment) {
-      setMentionState((current) => ({ ...current, open: false, query: '', start: cursor, end: cursor }));
-      setMentionActiveIndex(0);
+  function consoleMaximumHeight() {
+    const availableHeight = editorStackRef.current?.clientHeight;
+    if (!availableHeight) {
+      return MAX_CONSOLE_HEIGHT;
+    }
+    return Math.max(MIN_CONSOLE_HEIGHT, Math.min(MAX_CONSOLE_HEIGHT, availableHeight - MIN_EDITOR_HEIGHT));
+  }
+
+  function handleConsoleResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
       return;
     }
 
-    setMentionState({ open: true, query: fragment.query, start: fragment.start, end: cursor });
-    setMentionActiveIndex(0);
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = Math.min(consoleHeight, consoleMaximumHeight());
+    const maximumHeight = consoleMaximumHeight();
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    setConsoleResizing(true);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const handlePointerMove = (pointerEvent: PointerEvent) => {
+      const nextHeight = startHeight + startY - pointerEvent.clientY;
+      setConsoleHeight(clampNumber(nextHeight, MIN_CONSOLE_HEIGHT, maximumHeight));
+    };
+    const stopResizing = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResizing);
+      window.removeEventListener('pointercancel', stopResizing);
+      window.removeEventListener('blur', stopResizing);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      setConsoleResizing(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResizing);
+    window.addEventListener('pointercancel', stopResizing);
+    window.addEventListener('blur', stopResizing);
   }
 
-  function handleMentionKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (!mentionState.open || filteredMentionOptions.length === 0) {
-      return false;
+  function handleConsoleResizeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 48 : 20;
+    let nextHeight: number | null = null;
+    if (event.key === 'ArrowUp') nextHeight = consoleHeight + step;
+    if (event.key === 'ArrowDown') nextHeight = consoleHeight - step;
+    if (event.key === 'Home') nextHeight = MIN_CONSOLE_HEIGHT;
+    if (event.key === 'End') nextHeight = consoleMaximumHeight();
+    if (nextHeight === null) {
+      return;
     }
-
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setMentionActiveIndex((current) => (current + 1) % filteredMentionOptions.length);
-      return true;
-    }
-
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setMentionActiveIndex((current) => (current - 1 + filteredMentionOptions.length) % filteredMentionOptions.length);
-      return true;
-    }
-
-    if (event.key === 'Enter' || event.key === 'Tab') {
-      event.preventDefault();
-      insertMentionIntoDraft(filteredMentionOptions[Math.min(mentionActiveIndex, filteredMentionOptions.length - 1)]);
-      return true;
-    }
-
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      setMentionState((current) => ({ ...current, open: false }));
-      return true;
-    }
-
-    return false;
+    event.preventDefault();
+    setConsoleHeight(clampNumber(nextHeight, MIN_CONSOLE_HEIGHT, consoleMaximumHeight()));
   }
 
   function insertMentionIntoDraft(option: MentionOption) {
     const input = chatInputRef.current;
-    const start = mentionState.open ? mentionState.start : chatDraft.length;
-    const end = mentionState.open ? mentionState.end : chatDraft.length;
-    const prefix = chatDraft.slice(0, start);
-    const suffix = chatDraft.slice(end);
-    const needsLeadingSpace = prefix.length > 0 && !/\s$/.test(prefix);
-    const nextPrefix = `${prefix}${needsLeadingSpace ? ' ' : ''}@${option.label} `;
-    const nextDraft = `${nextPrefix}${suffix.replace(/^\s+/, '')}`;
-    const nextCursor = nextPrefix.length;
-    setChatDraft(nextDraft);
+    const start = input?.selectionStart ?? chatDraft.length;
+    const end = input?.selectionEnd ?? start;
+    const insertion = insertMentionText(chatDraft, option.label, { start, end });
+    setChatDraft(insertion.value);
     setChatError('');
-    setMentionState({ open: false, query: '', start: nextCursor, end: nextCursor });
     window.setTimeout(() => {
       input?.focus();
-      input?.setSelectionRange(nextCursor, nextCursor);
+      input?.setSelectionRange(insertion.cursor, insertion.cursor);
     }, 0);
   }
 
   function copyRoomCode() {
     const currentRoom = roomRef.current;
     if (currentRoom) {
-      void navigator.clipboard.writeText(currentRoom.code);
+      void navigator.clipboard.writeText(currentRoom.code)
+        .then(() => showToast('Room code copied'))
+        .catch(() => showToast(`Room code: ${currentRoom.code}`));
     }
   }
 
@@ -2442,104 +2562,6 @@ export default function App() {
 
 }
 
-function LandingPage({
-  backendWakeUrl,
-  code,
-  creating,
-  error,
-  joining,
-  notice,
-  onCodeChange,
-  onCreate,
-  onJoin,
-  realtimeWakeUrl
-}: {
-  backendWakeUrl: string;
-  code: string;
-  creating: boolean;
-  error: string;
-  joining: boolean;
-  notice: string;
-  onCodeChange: (code: string) => void;
-  onCreate: () => void;
-  onJoin: () => void;
-  realtimeWakeUrl: string;
-}) {
-  return (
-    <main className="landing-shell">
-      <div className="render-tier-banner" role="status">
-        <span className="render-tier-message">
-          <strong>Render free tier wake-up:</strong>
-          <span>First room creation can take 1-2 minutes while the backend and realtime services start.</span>
-        </span>
-        <span className="render-tier-instruction">Please click both links below to start the instances.</span>
-        <span className="render-tier-links">
-          {backendWakeUrl && <a href={backendWakeUrl} rel="noreferrer" target="_blank">{backendWakeUrl}</a>}
-          {realtimeWakeUrl && <a href={realtimeWakeUrl} rel="noreferrer" target="_blank">{realtimeWakeUrl}</a>}
-        </span>
-      </div>
-      <img alt="" className="landing-chibi" src={pearChibiUrl} />
-      <section className="landing-hero">
-        <div className="landing-hero-grid">
-          <div className="landing-copy">
-            <div className="landing-brand landing-brand-hero">
-              <img alt="" className="brand-logo brand-logo-large" src={pearLogoUrl} />
-              <h1>Pear Programming</h1>
-            </div>
-            <p className="landing-subheading">Pair Program Together. Real-time Coding Rooms.</p>
-            <h1>Code with others in a <strong>pear-ly</strong> friendly browser IDE in real time.</h1>
-            <p>
-              Pear Programming is a collaborative coding platform where teams can write code together in real time, chat alongside their work, and stay in sync in a shared browser IDE. Rooms are limited to 5 pears for smooth collaboration.
-      <br/>
-      <br/>
-      <b> What makes Pear Programming special?</b>
-      <br/>
-      <br/>
-        Meet <b>PearAI</b>—your context-aware coding assistant that understands your file, edits, cursors, and conversations to help you move faster.
-        PearAI will live in your room, ready to assist whenever you need it. Just mention @AI in chat to get started.
-
-              <br />
-              <br></br>
-              Now, go <strong>get pearing</strong>.
-            </p>
- 
-          </div>
-          <section className="landing-panel" id="room-actions">
-            <div className="room-card-heading">
-              <span>Create or Join a Room</span>
-              <small>Start empty, then upload your project</small>
-            </div>
-            <div className="landing-actions">
-              <button className="primary-button create-room-button" disabled={creating} onClick={onCreate} type="button">
-                {creating ? 'Creating...' : 'Create Pear Room'}
-              </button>
-              <form
-                className="join-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  onJoin();
-                }}
-              >
-                <input
-                  autoCapitalize="characters"
-                  onChange={(event) => onCodeChange(event.target.value)}
-                  placeholder="Enter Room Code"
-                  value={code}
-                />
-                <button className="secondary-button" disabled={joining} type="submit">
-                  {joining ? 'Joining...' : 'Join Pear Room'}
-                </button>
-              </form>
-            </div>
-            {notice && <p className="landing-notice">{notice}</p>}
-            {error && <p className="landing-error">{error}</p>}
-          </section>
-        </div>
-      </section>
-    </main>
-  );
-}
-
 function UploadModal({
   dragging,
   onCancel,
@@ -2763,6 +2785,22 @@ function getOrCreateConnectionId() {
   return id;
 }
 
+function loadConsoleHeight() {
+  try {
+    const storedHeight = Number(window.localStorage.getItem(CONSOLE_HEIGHT_STORAGE_KEY));
+    if (Number.isFinite(storedHeight) && storedHeight > 0) {
+      return clampNumber(storedHeight, MIN_CONSOLE_HEIGHT, MAX_CONSOLE_HEIGHT);
+    }
+  } catch {
+    // Use the default when local storage is unavailable.
+  }
+  return DEFAULT_CONSOLE_HEIGHT;
+}
+
+function clampNumber(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
 function loadRoomSession(): RoomSessionState | null {
   const stored = sessionStorage.getItem(ROOM_SESSION_STORAGE_KEY);
   if (!stored) {
@@ -2878,25 +2916,6 @@ function mentionBaseLabel(member: Member) {
     .replace(/\s+/g, '')
     .replace(/[^A-Za-z0-9_-]/g, '');
   return normalized || `user-${member.id.slice(0, 4)}`;
-}
-
-function mentionMatches(option: MentionOption, query: string) {
-  const normalizedQuery = query.toLowerCase();
-  return option.label.toLowerCase().includes(normalizedQuery) || option.name.toLowerCase().includes(normalizedQuery);
-}
-
-function mentionFragmentAt(value: string, cursor: number) {
-  const prefix = value.slice(0, cursor);
-  const match = prefix.match(/(^|\s)@([A-Za-z0-9_-]*)$/);
-  if (!match) {
-    return null;
-  }
-
-  const query = match[2] ?? '';
-  return {
-    query,
-    start: cursor - query.length - 1
-  };
 }
 
 function invalidMentionLabels(content: string, options: MentionOption[]) {
