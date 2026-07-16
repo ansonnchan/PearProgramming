@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Member } from '../types';
-import { buildMentionOptions, invalidMentionLabels, messageMentionsUser, reconcilePresenceSnapshot, uniqueMembers } from './presence';
+import {
+  buildMentionOptions,
+  invalidMentionLabels,
+  messageMentionsPearAi,
+  messageMentionsUser,
+  reconcilePresenceSnapshot,
+  uniqueMembers
+} from './presence';
 
 const member = (id: string, name: string): Member => ({ id, name, color: '#627d31' });
 
@@ -15,6 +22,17 @@ describe('presence normalization', () => {
     expect(options.map((option) => option.label)).toEqual(['PearUser-one', 'PearUser-two']);
     expect(messageMentionsUser('Hello @PearUser-two!', member('two', 'Pear User'), options)).toBe(true);
     expect(invalidMentionLabels('Hello @Missing', options)).toEqual(['Missing']);
+  });
+
+  it('uses PearAI as the only valid assistant mention', () => {
+    const options = buildMentionOptions([{ id: 'ai', name: 'PearAI', color: '#8B5CF6', ai: true }]);
+
+    expect(options[0]).toMatchObject({ label: 'PearAI', name: 'PearAI', ai: true });
+    expect(invalidMentionLabels('Ask @PearAI', options)).toEqual([]);
+    expect(invalidMentionLabels('Ask @AI', options)).toEqual(['AI']);
+    expect(messageMentionsPearAi('Ask @PearAI for help')).toBe(true);
+    expect(messageMentionsPearAi('Ask @AI for help')).toBe(false);
+    expect(messageMentionsPearAi('Email AI@example.com')).toBe(false);
   });
 
   it('replaces local presence with a complete late-joiner snapshot', () => {

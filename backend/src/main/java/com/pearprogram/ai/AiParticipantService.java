@@ -20,9 +20,10 @@ import java.util.Map;
 @Service
 public class AiParticipantService {
     private static final Logger log = LoggerFactory.getLogger(AiParticipantService.class);
+    public static final String DISPLAY_NAME = "PearAI";
 
     public static final String SYSTEM_PROMPT = """
-            You are AI, a collaborative coding assistant inside PearProgram.
+            You are PearAI, a collaborative coding assistant inside PearProgram.
              You are a room participant alongside human developers. You can see
              who is editing what in real time. Keep responses concise (<=3
              sentences for chat, <=2 sentences for inline annotations). Always
@@ -82,7 +83,7 @@ public class AiParticipantService {
         if (usesPlaceholderResponses()) {
             String user = displayName == null || displayName.isBlank() ? "your teammate" : displayName;
             String file = currentFile == null || currentFile.isBlank() ? "the active file" : currentFile;
-            return "Placeholder AI: " + user + ", I can see the room context for " + file
+            return "Placeholder PearAI: " + user + ", I can see the room context for " + file
                     + ". I would check changed lines, cursor positions, and recent chat before suggesting a concise next step.";
         }
         if (!isConfigured()) {
@@ -128,10 +129,10 @@ public class AiParticipantService {
         String file = currentFile == null || currentFile.isBlank() ? "No file selected" : currentFile;
         String line = currentLine == null || currentLine < 1 ? "Unknown" : currentLine.toString();
         String message = userMessage == null || userMessage.isBlank()
-                ? "The user mentioned @AI without additional details."
-                : userMessage.replaceAll("(?i)@ai\\b", "").trim();
+                ? "The user mentioned @PearAI without additional details."
+                : userMessage.replaceAll("(?i)@pearai\\b", "").trim();
         if (message.isBlank()) {
-            message = "The user mentioned @AI without additional details.";
+            message = "The user mentioned @PearAI without additional details.";
         }
         String codeContext = trimCodeContext(currentFileContent);
 

@@ -21,9 +21,11 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.security.Principal;
+import java.util.regex.Pattern;
 
 @Controller
 public class RoomEventController {
+    private static final Pattern PEAR_AI_MENTION = Pattern.compile("(^|\\s)@pearai\\b", Pattern.CASE_INSENSITIVE);
     private final RealtimeBroadcastService broadcastService;
     private final RoomService roomService;
     private final EphemeralRoomStateService roomStateService;
@@ -64,11 +66,11 @@ public class RoomEventController {
             OffsetDateTime.now()
         ));
 
-        if (inbound.content() != null && inbound.content().toUpperCase().contains("@AI")) {
+        if (inbound.content() != null && PEAR_AI_MENTION.matcher(inbound.content()).find()) {
             broadcastService.broadcast("/topic/room/" + code + "/chat", new ChatOutboundMessage(
                 java.util.UUID.randomUUID(),
                     null,
-                    "AI",
+                    AiParticipantService.DISPLAY_NAME,
                 aiParticipantService.chatResponse(
                     principal.displayName(),
                     inbound.currentFile(),

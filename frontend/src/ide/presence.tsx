@@ -108,8 +108,12 @@ export function displayNameOrPear(name?: string) {
   return name?.trim() || 'A pear';
 }
 
+export function messageMentionsPearAi(content: string) {
+  return /(^|\s)@pearai\b/i.test(content);
+}
+
 function mentionBaseLabel(member: Member) {
-  if (member.ai) return 'AI';
+  if (member.ai) return 'PearAI';
   const normalized = member.name.trim().replace(/\s+/g, '').replace(/[^A-Za-z0-9_-]/g, '');
   return normalized || `user-${member.id.slice(0, 4)}`;
 }

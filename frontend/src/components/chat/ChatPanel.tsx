@@ -171,6 +171,7 @@ export function ChatPanel({
         {messages.map((message) => {
           const participant = mentionOptions.find((option) => option.id === message.userId);
           const senderColor = message.ai ? '#7c5aa6' : participant?.color ?? (message.userId === user.id ? user.color : '#667653');
+          const senderName = message.ai ? 'PearAI' : message.displayName;
           return (
             <article className={`message ${message.ai ? 'message-ai' : ''} ${message.system ? 'message-system' : ''} ${messageMentionsUser(message) ? 'message-mentioned' : ''}`} key={message.id}>
               {message.system ? <p>{message.content}</p> : (
@@ -180,7 +181,7 @@ export function ChatPanel({
                   </span>
                   <div className="message-body">
                     <div className="message-meta">
-                      <span style={{ color: senderColor }}>{message.displayName}</span>
+                      <span style={{ color: senderColor }}>{senderName}</span>
                       <time dateTime={message.createdAt}>{formatPacificTime(message.createdAt)}</time>
                     </div>
                     <p>{renderContent(message)}</p>
@@ -215,7 +216,7 @@ export function ChatPanel({
             aria-autocomplete="list" aria-controls={mentionFragment ? mentionListId : undefined} aria-expanded={Boolean(mentionFragment)} aria-haspopup="listbox" aria-label="Message room"
             onChange={(event) => { onDraftChange(event.currentTarget.value); updateMentionMenu(event.currentTarget); }}
             onClick={(event) => updateMentionMenu(event.currentTarget)} onKeyDown={handleComposerKeyDown} onKeyUp={handleComposerKeyUp}
-            placeholder="Message or @AI…" ref={inputRef} role="combobox" rows={1} value={draft} />
+            placeholder="Message or @PearAI…" ref={inputRef} role="combobox" rows={1} value={draft} />
           <button aria-label="Send message" className="send-button" disabled={!draft.trim()} onClick={sendMessage} title="Send message" type="button"><Send size={16} /></button>
         </div>
       </div>

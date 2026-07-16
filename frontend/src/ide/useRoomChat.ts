@@ -4,7 +4,7 @@ import type { DisplayChatMessage, MentionOption } from '../components/chat/ChatP
 import { insertMentionText } from '../components/chat/mention';
 import { listChatHistory } from '../api';
 import type { ChatMessage, Member, Room, WorkspaceFile } from '../types';
-import { displayNameOrPear, invalidMentionLabels, messageMentionsUser } from './presence';
+import { displayNameOrPear, invalidMentionLabels, messageMentionsPearAi, messageMentionsUser } from './presence';
 import { formatPacificTime } from './roomSession';
 
 type UseRoomChatOptions = {
@@ -68,7 +68,7 @@ export function useRoomChat({ activeFile, cursorLine, editorRef, mentionOptions,
     }
 
     setChatError('');
-    const mentionsAi = content.toUpperCase().includes('@AI');
+    const mentionsAi = messageMentionsPearAi(content);
     if (stompClient?.connected) {
       stompClient.publish({
         destination: `/app/room/${room.code}/chat`,
@@ -87,7 +87,7 @@ export function useRoomChat({ activeFile, cursorLine, editorRef, mentionOptions,
         ...current,
         { id: crypto.randomUUID(), userId: user.id, displayName: user.name, content, ai: false, createdAt: new Date().toISOString() },
         ...(mentionsAi ? [{
-          id: crypto.randomUUID(), userId: null, displayName: 'AI',
+          id: crypto.randomUUID(), userId: null, displayName: 'PearAI',
           content: 'PearAI is unavailable because realtime chat is disconnected. Reconnect to the room and try again.',
           ai: true, createdAt: new Date().toISOString()
         }] : [])

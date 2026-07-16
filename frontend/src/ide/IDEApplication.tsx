@@ -196,7 +196,7 @@ export function IDEApplication() {
   });
   const activeProjectName = files.length > 0 ? projectNameForPaths(files.map((file) => file.path)) : 'Empty room';
   const humanMembers = uniqueMembers([user, ...Object.values(presenceMembers)]);
-  const members = uniqueMembers([...humanMembers, { id: 'ai', name: 'AI', color: '#8B5CF6', ai: true }]);
+  const members = uniqueMembers([...humanMembers, { id: 'ai', name: 'PearAI', color: '#8B5CF6', ai: true }]);
   const mentionOptions = buildMentionOptions(members);
   const isLeadPear = leadUserId === user.id;
   const roleLabel = isLeadPear ? 'Lead Pear' : 'Junior Pear';
@@ -523,7 +523,7 @@ export function IDEApplication() {
 
       const header = document.createElement('div');
       header.className = 'ai-annotation-header';
-      header.textContent = `AI - line ${annotation.line}`;
+      header.textContent = `PearAI - line ${annotation.line}`;
 
       const close = document.createElement('button');
       close.className = 'ai-annotation-close';

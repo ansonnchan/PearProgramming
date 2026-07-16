@@ -2,22 +2,28 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Member } from '../../types';
-import { ChatPanel, type MentionOption } from './ChatPanel';
+import { ChatPanel, type DisplayChatMessage, type MentionOption } from './ChatPanel';
 
 const user: Member = { id: 'user-1', name: 'Alice Pear', color: '#627d31' };
 const options: MentionOption[] = [
   { id: 'user-1', name: 'Alice Pear', label: 'AlicePear', color: '#627d31' },
   { id: 'user-2', name: 'Bob Bartlett', label: 'BobBartlett', color: '#9a653f' },
-  { id: 'ai', name: 'AI', label: 'AI', color: '#7c5aa6', ai: true }
+  { id: 'ai', name: 'PearAI', label: 'PearAI', color: '#7c5aa6', ai: true }
 ];
 
-function ChatHarness({ mentionOptions = options }: { mentionOptions?: MentionOption[] }) {
+function ChatHarness({
+  mentionOptions = options,
+  messages = []
+}: {
+  mentionOptions?: MentionOption[];
+  messages?: DisplayChatMessage[];
+}) {
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   return (
     <>
       <button type="button">Outside chat</button>
-      <ChatPanel draft={draft} error="" inputRef={inputRef} mentionOptions={mentionOptions} messages={[]}
+      <ChatPanel draft={draft} error="" inputRef={inputRef} mentionOptions={mentionOptions} messages={messages}
         messageMentionsUser={() => false} nowLabel="7:30 PM PDT" onClose={() => undefined}
         onDraftChange={setDraft} onSend={() => undefined} renderContent={(message) => message.content} user={user} />
     </>
@@ -70,7 +76,7 @@ describe('ChatPanel mention menu', () => {
     fireEvent.keyDown(input, { key: 'ArrowUp' });
     expect(screen.getByRole('option', { name: /@AlicePear/i })).toHaveAttribute('aria-selected', 'true');
     fireEvent.keyDown(input, { key: 'ArrowUp' });
-    expect(screen.getByRole('option', { name: /@AI/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: /@PearAI/i })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('selects the highlighted result with Enter and keeps typing focus', async () => {
@@ -139,5 +145,20 @@ describe('ChatPanel mention menu', () => {
     changeDraft(input, '');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
     expect(input).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('renders old and new assistant messages with the PearAI name', () => {
+    render(<ChatHarness messages={[{
+      id: 'assistant-message',
+      userId: null,
+      displayName: 'AI',
+      content: 'Hello from the assistant.',
+      ai: true,
+      createdAt: '2026-07-16T16:00:00Z'
+    }]} />);
+
+    expect(screen.getByText('PearAI')).toBeInTheDocument();
+    expect(screen.queryByText(/^AI$/)).not.toBeInTheDocument();
+    expect(composer()).toHaveAttribute('placeholder', 'Message or @PearAI…');
   });
 });

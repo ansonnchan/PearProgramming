@@ -83,7 +83,7 @@ export function LandingPage({
             </article>
             <article>
               <span className="landing-feature-icon"><Bot size={18} /></span>
-              <div><strong>PearAI assistant</strong><small>Your context-aware coding companion. Mention @AI to begin.</small></div>
+              <div><strong>PearAI assistant</strong><small>Your context-aware coding companion. Mention @PearAI to begin.</small></div>
             </article>
           </div>
         </div>
