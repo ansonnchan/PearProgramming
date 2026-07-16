@@ -3135,6 +3135,25 @@ button:disabled {
   z-index: var(--z-monaco) !important;
 }
 
+/*
+ * Monaco sizes completion rows with a fixed virtual-list height. The app's
+ * rounded fallback fonts can otherwise leave the inherited line box sitting
+ * below that row and Monaco clips the label. Keep the row height Monaco owns,
+ * but center its content using the label's natural line height.
+ */
+.monaco-editor .suggest-widget .monaco-list-row > .contents > .main {
+  align-items: center;
+  height: 100%;
+  line-height: normal !important;
+}
+
+.monaco-editor .suggest-widget .monaco-list-row > .contents > .main > .left,
+.monaco-editor .suggest-widget .monaco-list-row > .contents > .main > .right,
+.monaco-editor .suggest-widget .monaco-list-row .monaco-icon-label {
+  align-items: center;
+  height: 100%;
+}
+
 @media (max-width: 1400px) {
   .execution-toolbar {
     gap: 8px;
