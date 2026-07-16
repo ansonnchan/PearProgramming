@@ -4,8 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { EditorWorkspace } from './EditorWorkspace';
 
 vi.mock('@monaco-editor/react', () => ({
-  default: ({ options }: { options: { fixedOverflowWidgets?: boolean } }) => (
-    <div data-fixed-overflow-widgets={String(options.fixedOverflowWidgets)} data-testid="monaco-editor" />
+  default: ({ options }: { options: { fixedOverflowWidgets?: boolean; suggestLineHeight?: number } }) => (
+    <div
+      data-fixed-overflow-widgets={String(options.fixedOverflowWidgets)}
+      data-suggest-line-height={String(options.suggestLineHeight)}
+      data-testid="monaco-editor"
+    />
   )
 }));
 
@@ -49,6 +53,7 @@ describe('EditorWorkspace', () => {
   it('allows Monaco widgets to escape the editor scroll surface', () => {
     const { container } = render(<EditorWorkspace {...props} consoleHeight={700} />);
     expect(screen.getByTestId('monaco-editor')).toHaveAttribute('data-fixed-overflow-widgets', 'true');
+    expect(screen.getByTestId('monaco-editor')).toHaveAttribute('data-suggest-line-height', '28');
     expect(container.querySelector('.console-region')).toHaveStyle({ flexBasis: '520px' });
   });
 

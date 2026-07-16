@@ -86,6 +86,8 @@ export function EditorWorkspace({
                 padding: { top: 14, bottom: 14 },
                 scrollbar: { horizontalScrollbarSize: 10, verticalScrollbarSize: 10 },
                 scrollBeyondLastLine: false,
+                suggestFontSize: 14,
+                suggestLineHeight: 28,
                 tabSize: 2
               }}
               path={activeFile.path}

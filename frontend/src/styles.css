@@ -406,12 +406,13 @@ button:disabled {
 
 .landing-panel::before {
   position: absolute;
-  inset: 8px -8px -8px 8px;
+  inset: 8px;
   z-index: -1;
   border: 1px solid rgb(205 182 142 / 34%);
-  border-radius: inherit;
+  border-radius: 18px;
   content: '';
   background: rgb(235 215 179 / 28%);
+  pointer-events: none;
 }
 
 .room-card-heading {
