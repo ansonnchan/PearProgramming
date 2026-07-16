@@ -1,9 +1,7 @@
 import { type OnMount } from '@monaco-editor/react';
 import {
   Check,
-  ImagePlus,
   PanelRightOpen,
-  UserRound,
   Wifi,
   WifiOff,
   X
@@ -33,6 +31,7 @@ import { CreateItemModal, EntryProfileModal, Toast, UploadModal } from '../compo
 import { IDEHeader } from '../components/ide/IDEHeader';
 import { ExplorerPanel } from '../components/ide/ExplorerPanel';
 import { EditorWorkspace } from '../components/ide/EditorWorkspace';
+import { ProfileMenu } from '../components/ide/ProfileMenu';
 import { MIN_CONSOLE_HEIGHT, useConsoleLayout } from './useConsoleLayout';
 import { reconcileEditorTabs, restoreEditorTabs, useEditorTabs } from './useEditorTabs';
 import {
@@ -67,7 +66,6 @@ import {
   uploadNoticeText
 } from './workspaceFiles';
 import { createZipBlob, safeDownloadName } from './workspaceDownload';
-import { fileToDataUrl, isAllowedProfileImage } from './profileImage';
 import { useRoomEntry } from './useRoomEntry';
 import { useRoomPresence } from './useRoomPresence';
 import type { UploadCandidate, UploadReadResult } from '../uploads';
@@ -123,7 +121,6 @@ export function IDEApplication() {
   const [delegateUserId, setDelegateUserId] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileDraftName, setProfileDraftName] = useState('');
-  const [profileDraftAvatar, setProfileDraftAvatar] = useState<string | undefined>();
   const [createItemKind, setCreateItemKind] = useState<'file' | 'folder' | null>(null);
   const [createItemName, setCreateItemName] = useState('');
   const [createItemError, setCreateItemError] = useState('');
@@ -226,7 +223,6 @@ export function IDEApplication() {
   const deletedFileIdsRef = useRef<Set<string>>(new Set());
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const {
     addSystemMessage,
     chatDraft,
@@ -775,34 +771,14 @@ export function IDEApplication() {
       )}
 
       {profileOpen && (
-        <div className="modal-backdrop">
-          <section className="profile-modal" role="dialog" aria-modal="true" aria-label="Profile">
-            <header>
-              <h2>Profile</h2>
-              <button className="icon-button" onClick={() => setProfileOpen(false)} title="Close profile" type="button">
-                <X size={14} />
-              </button>
-            </header>
-            <div className="profile-preview">
-              <span className="profile-avatar" style={{ backgroundColor: `${user.color}22`, color: user.color }}>
-                {profileDraftAvatar ? <img alt="" src={profileDraftAvatar} /> : <UserRound size={22} />}
-              </span>
-              <button className="secondary-button" onClick={() => avatarInputRef.current?.click()} type="button">
-                <ImagePlus size={15} />
-                Upload photo
-              </button>
-              <input accept=".jpg,.jpeg,.png,.webp" className="hidden-file-input" onChange={(event) => void handleAvatarInput(event.currentTarget)} ref={avatarInputRef} type="file" />
-            </div>
-            <label className="field-label">
-              Display name
-              <input onChange={(event) => setProfileDraftName(event.target.value)} value={profileDraftName} />
-            </label>
-            <div className="modal-actions">
-              <button className="secondary-button" onClick={() => setProfileOpen(false)} type="button">Cancel</button>
-              <button className="primary-button" onClick={saveProfile} type="button">Save</button>
-            </div>
-          </section>
-        </div>
+        <ProfileMenu
+          draftName={profileDraftName}
+          onClose={() => setProfileOpen(false)}
+          onDraftNameChange={setProfileDraftName}
+          onSave={() => void saveProfile()}
+          roleLabel={roleLabel}
+          user={user}
+        />
       )}
       {createItemKind && (
         <CreateItemModal
@@ -1793,28 +1769,12 @@ export function IDEApplication() {
 
   function openProfileEditor(member: Member) {
     setProfileDraftName(member.name);
-    setProfileDraftAvatar(member.avatarUrl);
     setProfileOpen(true);
-  }
-
-  async function handleAvatarInput(input: HTMLInputElement) {
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file) {
-      return;
-    }
-
-    if (!isAllowedProfileImage(file)) {
-      showToast('Profile picture must be a JPG, PNG, or WEBP image.');
-      return;
-    }
-
-    setProfileDraftAvatar(await fileToDataUrl(file));
   }
 
   async function saveProfile() {
     try {
-      await updateProfile(profileDraftName.trim() || user.name, profileDraftAvatar);
+      await updateProfile(profileDraftName.trim() || user.name, user.avatarUrl);
     } catch {
       showToast('Could not update your server profile.');
       return;

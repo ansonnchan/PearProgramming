@@ -69,7 +69,7 @@ export function IDEHeader({
                 key={member.id}
                 onClick={onOpenProfile}
                 style={{ backgroundColor: `${member.color}22`, color: member.color }}
-                title="Edit profile"
+                title="View profile"
                 type="button"
               >
                 {member.avatarUrl ? <img alt="" src={member.avatarUrl} /> : initials(member.name)}
@@ -87,7 +87,7 @@ export function IDEHeader({
             {hiddenMemberCount > 0 && <span className="avatar avatar-overflow" title={`${hiddenMemberCount} more collaborators`}>+{hiddenMemberCount}</span>}
           </div>
         </div>
-        <button aria-label="Profile settings" className="topbar-icon-button" onClick={onOpenProfile} title="Profile settings" type="button">
+        <button aria-label="Open profile" className="topbar-icon-button" onClick={onOpenProfile} title="Open profile" type="button">
           <Settings size={16} />
         </button>
         <div className="pear-menu">

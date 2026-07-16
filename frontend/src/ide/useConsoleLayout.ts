@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 
 const CONSOLE_HEIGHT_STORAGE_KEY = 'pearprogram-console-height';
+const CONSOLE_OPEN_STORAGE_KEY = 'pearprogram-console-open';
 const DEFAULT_CONSOLE_HEIGHT = 250;
 const MAX_CONSOLE_HEIGHT = 520;
 const MIN_EDITOR_HEIGHT = 170;
@@ -8,8 +9,9 @@ const MIN_EDITOR_HEIGHT = 170;
 export const MIN_CONSOLE_HEIGHT = 160;
 
 export function useConsoleLayout() {
-  const [executionPanelOpen, setExecutionPanelOpen] = useState(true);
+  const [executionPanelOpen, setExecutionPanelOpen] = useState(loadConsoleOpen);
   const [consoleHeight, setConsoleHeight] = useState(loadConsoleHeight);
+  const [consoleMaximumHeightValue, setConsoleMaximumHeightValue] = useState(MAX_CONSOLE_HEIGHT);
   const [consoleResizing, setConsoleResizing] = useState(false);
   const editorStackRef = useRef<HTMLDivElement | null>(null);
 
@@ -21,12 +23,38 @@ export function useConsoleLayout() {
     }
   }, [consoleHeight]);
 
-  function consoleMaximumHeight() {
-    const availableHeight = editorStackRef.current?.clientHeight;
-    if (!availableHeight) {
-      return MAX_CONSOLE_HEIGHT;
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CONSOLE_OPEN_STORAGE_KEY, String(executionPanelOpen));
+    } catch {
+      // Showing and hiding the console remains available when local storage is disabled.
     }
-    return Math.max(MIN_CONSOLE_HEIGHT, Math.min(MAX_CONSOLE_HEIGHT, availableHeight - MIN_EDITOR_HEIGHT));
+  }, [executionPanelOpen]);
+
+  useEffect(() => {
+    const editorStack = editorStackRef.current;
+    if (!editorStack) return;
+
+    const updateMaximumHeight = () => {
+      const availableHeight = editorStack.clientHeight;
+      const nextMaximum = availableHeight
+        ? Math.max(MIN_CONSOLE_HEIGHT, Math.min(MAX_CONSOLE_HEIGHT, availableHeight - MIN_EDITOR_HEIGHT))
+        : MAX_CONSOLE_HEIGHT;
+      setConsoleMaximumHeightValue((current) => current === nextMaximum ? current : nextMaximum);
+    };
+
+    updateMaximumHeight();
+    window.addEventListener('resize', updateMaximumHeight);
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateMaximumHeight);
+    resizeObserver?.observe(editorStack);
+    return () => {
+      window.removeEventListener('resize', updateMaximumHeight);
+      resizeObserver?.disconnect();
+    };
+  }, []);
+
+  function consoleMaximumHeight() {
+    return consoleMaximumHeightValue;
   }
 
   function handleConsoleResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
@@ -101,6 +129,17 @@ export function loadConsoleHeight() {
     // Use the default when local storage is disabled.
   }
   return DEFAULT_CONSOLE_HEIGHT;
+}
+
+export function loadConsoleOpen() {
+  try {
+    const value = window.localStorage.getItem(CONSOLE_OPEN_STORAGE_KEY);
+    if (value === 'false') return false;
+    if (value === 'true') return true;
+  } catch {
+    // Use the default when local storage is disabled.
+  }
+  return true;
 }
 
 function clampNumber(value: number, minimum: number, maximum: number) {

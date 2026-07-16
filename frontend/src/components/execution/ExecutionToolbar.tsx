@@ -23,6 +23,7 @@ export function ExecutionToolbar({
   return (
     <div className="execution-toolbar" aria-label="Execution controls" role="toolbar">
       <button
+        aria-label={submitting ? 'Submitting…' : 'Run'}
         className="run-button"
         disabled={!activeFile || submitting}
         onClick={onRun}
@@ -30,7 +31,7 @@ export function ExecutionToolbar({
         type="button"
       >
         <Play size={14} />
-        {submitting ? 'Submitting…' : 'Run'}
+        <span className="control-label">{submitting ? 'Submitting…' : 'Run'}</span>
       </button>
       <label className="execution-language-label">
         <span>Language</span>
@@ -45,9 +46,9 @@ export function ExecutionToolbar({
         <span />
         {submitting ? 'Running' : activeFile ? 'Ready' : 'Choose a file'}
       </span>
-      <button className="console-toggle" onClick={onToggleConsole} type="button">
+      <button aria-label={consoleOpen ? 'Hide console' : 'Show console'} className="console-toggle" onClick={onToggleConsole} type="button">
         <SquareTerminal size={14} />
-        {consoleOpen ? 'Hide console' : 'Show console'}
+        <span className="control-label">{consoleOpen ? 'Hide console' : 'Show console'}</span>
       </button>
     </div>
   );

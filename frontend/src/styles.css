@@ -35,6 +35,15 @@
   --shadow-raised: 0 18px 48px rgb(73 54 27 / 16%);
   --transition-fast: 140ms ease;
   --transition-panel: 220ms cubic-bezier(.2, .8, .2, 1);
+  /* Shared stacking scale: content < resize handles < panels < header < popovers < Monaco widgets < modals < toasts. */
+  --z-content: 1;
+  --z-resizer: 3;
+  --z-panel: 20;
+  --z-header: 30;
+  --z-popover: 40;
+  --z-monaco: 50;
+  --z-modal: 60;
+  --z-toast: 80;
   --font-hand: "Chalkboard SE", "Bradley Hand", "Comic Sans MS", ui-rounded, sans-serif;
   --explorer-width: clamp(240px, 18vw, 280px);
   --chat-width: clamp(295px, 22.5vw, 350px);
@@ -660,7 +669,7 @@ button:disabled {
 
 .topbar {
   position: relative;
-  z-index: 30;
+  z-index: var(--z-header);
   display: grid;
   grid-template-columns: minmax(210px, 1fr) auto minmax(290px, 1fr);
   align-items: center;
@@ -904,7 +913,7 @@ button:disabled {
   position: absolute;
   top: calc(100% + 9px);
   right: 0;
-  z-index: 30;
+  z-index: var(--z-popover);
   display: grid;
   width: 174px;
   padding: var(--space-2);
@@ -1150,7 +1159,7 @@ button:disabled {
   position: absolute;
   top: calc(100% + 7px);
   right: 0;
-  z-index: 35;
+  z-index: var(--z-popover);
   display: grid;
   width: 144px;
   padding: 6px;
@@ -1566,6 +1575,7 @@ button:disabled {
 }
 
 .editor-area {
+  position: relative;
   display: grid;
   grid-template-rows: 62px 48px minmax(0, 1fr);
   min-width: 0;
@@ -1579,11 +1589,14 @@ button:disabled {
 }
 
 .execution-toolbar {
+  position: relative;
+  z-index: var(--z-content);
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
   padding: 0 18px;
+  overflow: visible;
   border-bottom: 1px solid var(--color-border);
   background: linear-gradient(180deg, #fffaf0, #f7ebd5);
   color: var(--color-text);
@@ -1624,6 +1637,7 @@ button:disabled {
 
 .execution-language-label {
   display: inline-flex;
+  flex: 1 1 230px;
   align-items: center;
   gap: 7px;
   color: var(--color-text-muted);
@@ -1632,6 +1646,7 @@ button:disabled {
 }
 
 .execution-language-label select {
+  width: min(230px, 100%);
   height: 38px;
   min-width: 230px;
   padding: 0 30px 0 10px;
@@ -1776,6 +1791,7 @@ button:disabled {
 }
 
 .editor-stack {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1786,7 +1802,7 @@ button:disabled {
 .editor-frame {
   flex: 1 1 0;
   min-width: 0;
-  min-height: 140px;
+  min-height: 170px;
   overflow: hidden;
 }
 
@@ -1794,9 +1810,8 @@ button:disabled {
   display: grid;
   grid-template-rows: 8px minmax(0, 1fr);
   flex-grow: 0;
-  flex-shrink: 1;
+  flex-shrink: 0;
   min-height: 160px;
-  max-height: 55%;
   overflow: hidden;
   opacity: 1;
   visibility: visible;
@@ -1818,7 +1833,7 @@ button:disabled {
 
 .console-resize-handle {
   position: relative;
-  z-index: 3;
+  z-index: var(--z-resizer);
   display: grid;
   place-items: center;
   min-width: 0;
@@ -2595,7 +2610,7 @@ button:disabled {
   right: 10px;
   bottom: calc(100% + 8px);
   left: 10px;
-  z-index: 30;
+  z-index: var(--z-popover);
   display: grid;
   gap: 4px;
   max-height: min(248px, 40vh);
@@ -2746,7 +2761,7 @@ button:disabled {
   position: fixed;
   right: 18px;
   bottom: 18px;
-  z-index: 80;
+  z-index: var(--z-toast);
   max-width: min(360px, calc(100vw - 36px));
   padding: 12px 14px;
   border: 1px solid #c8d5af;
@@ -2761,7 +2776,7 @@ button:disabled {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: var(--z-modal);
   display: grid;
   place-items: center;
   padding: 18px;
@@ -2772,8 +2787,7 @@ button:disabled {
   animation: modal-fade-in 180ms ease-out;
 }
 
-.confirm-modal,
-.profile-modal {
+.confirm-modal {
   width: min(390px, 100%);
   padding: 16px;
   border: 1px solid #30363d;
@@ -2914,8 +2928,7 @@ button:disabled {
   margin-bottom: 10px;
 }
 
-.confirm-modal h2,
-.profile-modal h2 {
+.confirm-modal h2 {
   margin: 0;
   color: #f0f6fc;
   font-size: 16px;
@@ -2988,6 +3001,118 @@ button:disabled {
   border-radius: 50%;
 }
 
+.profile-menu-backdrop {
+  background: rgb(67 55 36 / 30%);
+  backdrop-filter: blur(3px);
+}
+
+.profile-modal {
+  width: min(410px, 100%);
+  padding: 20px;
+  border: 1px solid #d6c29d;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 92% 5%, rgb(196 214 129 / 28%), transparent 31%),
+    linear-gradient(150deg, #fffdf5, #f6ead3);
+  color: #39372d;
+  box-shadow: 0 24px 64px rgb(73 54 27 / 24%);
+}
+
+.profile-modal header {
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.profile-modal h2 {
+  margin: 2px 0 0;
+  color: #365126;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.profile-menu-kicker {
+  color: #6b7f3d;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.profile-close-button {
+  border-color: rgb(141 126 91 / 20%);
+  background: rgb(255 253 247 / 66%);
+}
+
+.profile-modal .profile-preview {
+  padding: 12px;
+  border: 1px solid rgb(190 166 121 / 42%);
+  border-radius: 12px;
+  background: rgb(255 252 242 / 72%);
+}
+
+.profile-modal .profile-avatar {
+  flex: 0 0 52px;
+  width: 52px;
+  height: 52px;
+  border: 2px solid rgb(255 253 247 / 90%);
+  box-shadow: 0 5px 13px rgb(78 61 35 / 15%);
+}
+
+.profile-identity-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.profile-identity-copy strong {
+  overflow: hidden;
+  color: #34382a;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-identity-copy span,
+.profile-avatar-note {
+  color: #726b56;
+  font-size: 12px;
+}
+
+.profile-avatar-note {
+  margin: -2px 2px 15px;
+  line-height: 1.45;
+}
+
+.profile-modal .profile-name-field {
+  color: #514f3e;
+}
+
+.profile-modal .profile-name-field input {
+  border-color: rgb(166 141 94 / 44%);
+  background: rgb(255 253 247 / 85%);
+  color: #34382a;
+}
+
+.profile-modal .secondary-button {
+  border-color: #cfbd99;
+  background: #fffaf0;
+  color: #514f3e;
+}
+
+.profile-modal .secondary-button:hover {
+  border-color: var(--color-pear-500);
+  background: var(--color-pear-50);
+}
+
+.profile-modal .primary-button {
+  border-color: #627d31;
+  background: #627d31;
+}
+
+.profile-modal .primary-button:hover {
+  background: #516c29;
+}
+
 .field-label {
   display: grid;
   gap: 6px;
@@ -3007,6 +3132,37 @@ button:disabled {
   color: #ffb4a8;
   font-size: 12px;
   font-weight: 800;
+}
+
+/* Monaco can render widgets outside its scrolling surface; keep those widgets on the shared scale. */
+.monaco-editor .overflowingContentWidgets,
+.monaco-editor .suggest-widget,
+.monaco-editor .monaco-hover,
+.monaco-editor .find-widget,
+.monaco-editor .context-view,
+.context-view.monaco-menu-container {
+  z-index: var(--z-monaco) !important;
+}
+
+@media (max-width: 1400px) {
+  .execution-toolbar {
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .execution-language-label {
+    flex-basis: 180px;
+  }
+
+  .execution-language-label select {
+    min-width: 150px;
+    width: min(190px, 100%);
+  }
+
+  .java-main-hint,
+  .execution-readiness {
+    display: none;
+  }
 }
 
 @media (max-width: 1100px) {
@@ -3094,7 +3250,7 @@ button:disabled {
     position: absolute;
     top: var(--space-2);
     bottom: 0;
-    z-index: 20;
+    z-index: var(--z-panel);
     width: min(280px, calc(100% - 72px));
     box-shadow: var(--shadow-raised);
     animation: panel-drawer-in var(--transition-panel);
@@ -3112,7 +3268,7 @@ button:disabled {
   .chat-rail {
     position: absolute;
     top: 16px;
-    z-index: 21;
+    z-index: calc(var(--z-panel) + 1);
     width: 40px;
     height: 40px;
     padding: 3px;
@@ -3130,6 +3286,54 @@ button:disabled {
 
   .chat-rail {
     right: 16px;
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1100px) {
+  .workspace-grid {
+    --explorer-width: 218px;
+    --chat-width: 260px;
+    grid-template-columns: var(--explorer-width) minmax(360px, 1fr) var(--chat-width);
+  }
+
+  .workspace-grid.chat-collapsed {
+    grid-template-columns: var(--explorer-width) minmax(360px, 1fr) 42px;
+  }
+
+  .workspace-grid.explorer-collapsed {
+    grid-template-columns: 42px minmax(360px, 1fr) var(--chat-width);
+  }
+
+  .workspace-grid.explorer-collapsed.chat-collapsed {
+    grid-template-columns: 42px minmax(360px, 1fr) 42px;
+  }
+
+  .editor-area {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .explorer,
+  .chat,
+  .explorer-rail,
+  .chat-rail {
+    position: relative;
+    inset: auto;
+    width: auto;
+    height: auto;
+    box-shadow: var(--shadow-panel);
+    animation: none;
+  }
+
+  .explorer-rail,
+  .chat-rail {
+    padding: var(--space-2) 0 0;
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-bottom: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    background: var(--color-surface);
+    backdrop-filter: none;
   }
 }
 
@@ -3306,7 +3510,8 @@ button:disabled {
 
   .execution-toolbar {
     gap: 6px;
-    overflow-x: auto;
+    padding: 0 10px;
+    overflow: visible;
   }
 
   .execution-language-label span,
@@ -3316,7 +3521,7 @@ button:disabled {
   }
 
   .execution-language-label select {
-    min-width: 160px;
+    min-width: 130px;
   }
 }
 
@@ -3349,6 +3554,28 @@ button:disabled {
 
   .role-chip {
     padding: 0 10px;
+  }
+
+  .execution-language-label {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .execution-language-label select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .run-button,
+  .console-toggle {
+    flex: 0 0 38px;
+    width: 38px;
+    min-width: 38px;
+    padding: 0;
+  }
+
+  .execution-toolbar .control-label {
+    display: none;
   }
 }
 

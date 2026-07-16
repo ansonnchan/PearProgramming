@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadConsoleHeight, MIN_CONSOLE_HEIGHT, useConsoleLayout } from './useConsoleLayout';
+import { loadConsoleHeight, loadConsoleOpen, MIN_CONSOLE_HEIGHT, useConsoleLayout } from './useConsoleLayout';
 
 describe('useConsoleLayout', () => {
   beforeEach(() => {
@@ -33,5 +33,16 @@ describe('useConsoleLayout', () => {
 
     act(() => result.current.handleConsoleResizeKeyDown({ key: 'ArrowUp', shiftKey: true, preventDefault } as never));
     expect(result.current.consoleHeight).toBe(MIN_CONSOLE_HEIGHT + 48);
+  });
+
+  it('restores and persists the console open state', () => {
+    window.localStorage.setItem('pearprogram-console-open', 'false');
+    expect(loadConsoleOpen()).toBe(false);
+
+    const { result } = renderHook(() => useConsoleLayout());
+    expect(result.current.executionPanelOpen).toBe(false);
+
+    act(() => result.current.setExecutionPanelOpen(true));
+    expect(window.localStorage.getItem('pearprogram-console-open')).toBe('true');
   });
 });

@@ -78,6 +78,7 @@ export function EditorWorkspace({
               onMount={onEditorMount}
               options={{
                 automaticLayout: true,
+                fixedOverflowWidgets: true,
                 fontFamily: 'JetBrains Mono, Consolas, monospace',
                 fontSize: 14,
                 lineHeight: 22,
@@ -98,7 +99,7 @@ export function EditorWorkspace({
         <div
           aria-hidden={!consoleOpen}
           className={`console-region ${consoleOpen ? '' : 'console-region-collapsed'}`}
-          style={{ flexBasis: consoleOpen ? `${consoleHeight}px` : '0px' }}
+          style={{ flexBasis: consoleOpen ? `${Math.min(consoleHeight, consoleMaximumHeight)}px` : '0px' }}
         >
           <div
             aria-controls="execution-console"
