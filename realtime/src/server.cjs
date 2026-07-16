@@ -572,8 +572,42 @@ async function cleanupInactiveRoom(roomCode) {
 
   await flushRoomSnapshots(roomCode);
   const removedDocs = cleanupInMemoryRoomDocs(roomCode);
-  await notifyBackendRoomCleanup(roomCode);
-  log('info', 'Cleaned up inactive Yjs room state', { room: roomCode, removedDocs });
+  const removedRedisKeys = await cleanupRedisRoomDocs(roomCode);
+  const backendResult = await notifyBackendRoomCleanup(roomCode);
+  if (backendResult?.reason === 'pending' && !roomSockets.has(roomCode)) {
+    scheduleBackendCleanupRetry(roomCode);
+  }
+  log('info', 'Cleaned up inactive Yjs room state', { room: roomCode, removedDocs, removedRedisKeys });
+}
+
+function scheduleBackendCleanupRetry(roomCode) {
+  cancelRoomCleanup(roomCode);
+  const timer = setTimeout(() => {
+    roomCleanupTimers.delete(roomCode);
+    if (!roomSockets.has(roomCode)) {
+      cleanupInactiveRoom(roomCode).catch((error) => log('warn', 'Room cleanup retry failed', { room: roomCode, error: error.message }));
+    }
+  }, 5_000);
+  timer.unref?.();
+  roomCleanupTimers.set(roomCode, timer);
+  log('info', 'Scheduled backend room cleanup retry', { room: roomCode, retryMs: 5_000 });
+}
+
+async function cleanupRedisRoomDocs(roomCode) {
+  if (!redisAvailable || !redis) {
+    return 0;
+  }
+  let cursor = '0';
+  let removed = 0;
+  const pattern = `${REDIS_KEY_PREFIX}:yjs:${roomCode}:*:updates`;
+  do {
+    const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+    cursor = nextCursor;
+    if (keys.length > 0) {
+      removed += await redis.del(...keys);
+    }
+  } while (cursor !== '0');
+  return removed;
 }
 
 function cleanupInMemoryRoomDocs(roomCode) {
@@ -598,7 +632,7 @@ function cleanupInMemoryRoomDocs(roomCode) {
 
 async function notifyBackendRoomCleanup(roomCode) {
   if (!ROOM_CLEANUP_ENDPOINT) {
-    return;
+    return null;
   }
 
   try {
@@ -610,9 +644,12 @@ async function notifyBackendRoomCleanup(roomCode) {
 
     if (!response.ok) {
       log('warn', 'Backend room cleanup returned non-OK status', { room: roomCode, status: response.status });
+      return null;
     }
+    return await response.json().catch(() => null);
   } catch (error) {
     log('warn', 'Backend room cleanup request failed', { room: roomCode, error: error.message });
+    return null;
   }
 }
 

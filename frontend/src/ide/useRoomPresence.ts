@@ -2,7 +2,7 @@ import type { Client } from '@stomp/stompjs';
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { projectNameForPaths } from '../uploads';
 import type { Member, Room, WorkspaceFile } from '../types';
-import { displayNameOrPear, type MemberRealtimeEvent } from './presence';
+import { displayNameOrPear, reconcilePresenceSnapshot, type MemberRealtimeEvent } from './presence';
 
 type UseRoomPresenceOptions = {
   addSystemMessage: (message: string) => void;
@@ -12,6 +12,7 @@ type UseRoomPresenceOptions = {
   onConnected: (client: Client) => void;
   onCursorLeft: (userId: string) => void;
   onRoomClosed: (notice: string) => void;
+  onSnapshot: (activeUserIds: Set<string>) => void;
   room: Room | null;
   user: Member;
   userRef: MutableRefObject<Member>;
@@ -25,6 +26,7 @@ export function useRoomPresence({
   onConnected,
   onCursorLeft,
   onRoomClosed,
+  onSnapshot,
   room,
   user,
   userRef
@@ -34,6 +36,7 @@ export function useRoomPresence({
   const [roomLocked, setRoomLocked] = useState(false);
   const leadUserIdRef = useRef<string | null>(null);
   const roomLockedRef = useRef(false);
+  const presenceVersionRef = useRef(0);
 
   useEffect(() => {
     leadUserIdRef.current = leadUserId;
@@ -87,6 +90,22 @@ export function useRoomPresence({
 
   function handleMemberEvent(event: MemberRealtimeEvent, client: Client) {
     if (!event.userId) return;
+    if (event.type === 'presence-snapshot') {
+      const snapshot = reconcilePresenceSnapshot(event, presenceVersionRef.current, user.id, presenceMembers);
+      if (!snapshot) return;
+      presenceVersionRef.current = snapshot.version;
+      setPresenceMembers(snapshot.members);
+      onSnapshot(new Set((event.members ?? []).map((member) => member.userId)));
+      if (event.leadUserId !== undefined) setLeadUserId(event.leadUserId ?? null);
+      if (typeof event.locked === 'boolean') setRoomLocked(event.locked);
+      console.info('Room presence snapshot received', {
+        roomCode: room?.code,
+        connectionId: event.connectionId,
+        version: snapshot.version,
+        activeCount: Object.keys(snapshot.members).length + 1
+      });
+      return;
+    }
     if (event.type === 'room-closed') {
       if (event.userId !== user.id) onRoomClosed('The Lead Pear closed this room.');
       return;
@@ -168,6 +187,7 @@ export function useRoomPresence({
   }
 
   function resetPresence(nextRoom?: Room) {
+    presenceVersionRef.current = 0;
     setPresenceMembers({});
     setLeadUserId(nextRoom?.leadUserId ?? null);
     setRoomLocked(nextRoom?.locked ?? false);

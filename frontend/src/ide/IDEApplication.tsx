@@ -186,15 +186,17 @@ export function IDEApplication() {
       returnToLanding(notice);
       showToast(notice);
     },
+    onSnapshot: (activeUserIds) => {
+      setCursors((current) => Object.fromEntries(
+        Object.entries(current).filter(([userId]) => activeUserIds.has(userId))
+      ));
+    },
     room,
     user,
     userRef
   });
   const activeProjectName = files.length > 0 ? projectNameForPaths(files.map((file) => file.path)) : 'Empty room';
-  const remoteMembers = Object.values(cursors)
-    .filter((cursor) => cursor.userId !== user.id)
-    .map<Member>((cursor) => ({ id: cursor.userId, name: cursor.displayName, color: cursor.color }));
-  const humanMembers = uniqueMembers([user, ...Object.values(presenceMembers), ...remoteMembers]);
+  const humanMembers = uniqueMembers([user, ...Object.values(presenceMembers)]);
   const members = uniqueMembers([...humanMembers, { id: 'ai', name: 'AI', color: '#8B5CF6', ai: true }]);
   const mentionOptions = buildMentionOptions(members);
   const isLeadPear = leadUserId === user.id;

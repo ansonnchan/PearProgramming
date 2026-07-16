@@ -23,6 +23,7 @@ class RoomEventControllerIdentityTests {
                 broadcasts,
                 mock(RoomService.class),
                 mock(EphemeralRoomStateService.class),
+                mock(RoomPresenceEventService.class),
                 mock(AiParticipantService.class),
                 null
         );

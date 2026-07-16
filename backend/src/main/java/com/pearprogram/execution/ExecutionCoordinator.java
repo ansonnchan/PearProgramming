@@ -32,4 +32,7 @@ interface ExecutionCoordinator {
     int recoverExpiredLeases(Instant now, String safeFailureMessage, Duration ttl);
 
     long queueDepth();
+
+    default void cleanupRoom(String roomCode) {
+    }
 }

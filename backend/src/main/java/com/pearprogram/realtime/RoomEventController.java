@@ -27,6 +27,7 @@ public class RoomEventController {
     private final RealtimeBroadcastService broadcastService;
     private final RoomService roomService;
     private final EphemeralRoomStateService roomStateService;
+    private final RoomPresenceEventService presenceEvents;
     private final AiParticipantService aiParticipantService;
     private final MeterRegistry meterRegistry;
 
@@ -34,12 +35,14 @@ public class RoomEventController {
             RealtimeBroadcastService broadcastService,
             RoomService roomService,
             EphemeralRoomStateService roomStateService,
+            RoomPresenceEventService presenceEvents,
             AiParticipantService aiParticipantService,
             @Nullable MeterRegistry meterRegistry
     ) {
         this.broadcastService = broadcastService;
         this.roomService = roomService;
         this.roomStateService = roomStateService;
+        this.presenceEvents = presenceEvents;
         this.aiParticipantService = aiParticipantService;
         this.meterRegistry = meterRegistry;
     }
@@ -100,6 +103,7 @@ public class RoomEventController {
         MemberEvent event = trustedMemberEvent(code, inbound, principal, connectionId);
         MemberEvent outbound = event;
         MemberEvent followUp = null;
+        boolean publishSnapshot = false;
         if ("joined".equals(event.type())) {
             roomStateService.joinRoom(code, event.sessionId(), event.connectionId(), event.displayName(), event.color());
             RoomAccessDto access = roomStateService.roomAccess(code, event.sessionId(), event.displayName());
@@ -107,39 +111,23 @@ public class RoomEventController {
                 access = roomStateService.transferLead(code, event.userId());
             }
             outbound = withRoomState(event, access);
-            roomService.cancelCleanup(code);
+            presenceEvents.register(code, outbound);
+            publishSnapshot = true;
         } else if ("presence-sync".equals(event.type())) {
             roomStateService.joinRoom(code, event.sessionId(), event.connectionId(), event.displayName(), event.color());
             outbound = withRoomState(event, roomStateService.roomAccess(code, event.sessionId(), event.displayName()));
+            presenceEvents.register(code, outbound);
+            publishSnapshot = true;
         } else if ("left".equals(event.type())) {
-            String previousLeadUserId = roomStateService.getLeadUserId(code);
-            RoomAccessDto state = roomStateService.leaveRoom(code, event.sessionId(), event.connectionId(), event.displayName());
-            outbound = withRoomState(event, state);
-            if (state.memberCount() == 0) {
-                roomService.scheduleCleanupIfEmpty(code);
-            } else if (event.userId() != null && event.userId().equals(previousLeadUserId)) {
-                java.util.Optional<EphemeralRoomStateService.ActiveMember> nextLead =
-                        roomStateService.firstActiveMemberExcept(code, event.userId());
-                if (nextLead.isPresent()) {
-                    EphemeralRoomStateService.ActiveMember candidate = nextLead.get();
-                    RoomAccessDto transferred = roomStateService.transferLead(code, candidate.userId());
-                    outbound = withRoomState(event, transferred);
-                    followUp = withRoomState(new MemberEvent(
-                            "lead-transferred",
-                            event.userId(),
-                            event.sessionId(),
-                            event.connectionId(),
-                            event.displayName(),
-                            event.color(),
-                            event.avatarUrl(),
-                            candidate.userId(),
-                            candidate.userId(),
-                            candidate.displayName(),
-                            transferred.locked(),
-                            event.at()
-                    ), transferred);
-                }
-            }
+            presenceEvents.depart(new RoomConnectionRegistry.ConnectionPresence(
+                    code,
+                    event.userId(),
+                    event.connectionId(),
+                    event.displayName(),
+                    event.color(),
+                    event.avatarUrl()
+            ));
+            return;
         } else if ("lead-transferred".equals(event.type())) {
             requireLead(code, principal.id());
             String nextLead = event.leadUserId() == null || event.leadUserId().isBlank()
@@ -167,6 +155,9 @@ public class RoomEventController {
         broadcastService.broadcast("/topic/room/" + code + "/members", outbound);
         if (followUp != null) {
             broadcastService.broadcast("/topic/room/" + code + "/members", followUp);
+        }
+        if (publishSnapshot) {
+            presenceEvents.broadcastSnapshot(code, event.userId(), event.connectionId());
         }
     }
 
@@ -218,7 +209,9 @@ public class RoomEventController {
                 event.targetUserId(),
                 event.targetUserName(),
                 state.locked(),
-                event.at()
+                event.at(),
+                event.members(),
+                event.presenceVersion()
         );
     }
 
@@ -254,7 +247,9 @@ public class RoomEventController {
                 event.targetUserId(),
                 targetName,
                 event.locked(),
-                event.at()
+                OffsetDateTime.now(),
+                null,
+                null
         );
     }
 

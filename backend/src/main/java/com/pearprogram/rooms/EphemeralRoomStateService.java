@@ -23,6 +23,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 @Service
@@ -124,6 +125,7 @@ public class EphemeralRoomStateService {
                     redisTemplate.delete(roomAnnotationsKey(code));
                     redisTemplate.opsForValue().set(roomCountKey(code), "0", roomStateTtl);
                     redisTemplate.opsForValue().set(roomColorCursorKey(code), "0", roomStateTtl);
+                    redisTemplate.opsForValue().set(roomPresenceVersionKey(code), "0", roomStateTtl);
                     expireRoomKeys(code);
                     return null;
                 },
@@ -139,6 +141,7 @@ public class EphemeralRoomStateService {
                     state.annotations.clear();
                     state.memberCount.set(0);
                     state.colorCursor.set(0);
+                    state.presenceVersion.set(0);
                     return null;
                 }
         );
@@ -152,6 +155,7 @@ public class EphemeralRoomStateService {
                     redisTemplate.opsForHash().putIfAbsent(roomMetaKey(code), "locked", "false");
                     redisTemplate.opsForValue().setIfAbsent(roomCountKey(code), "0", roomStateTtl);
                     redisTemplate.opsForValue().setIfAbsent(roomColorCursorKey(code), "0", roomStateTtl);
+                    redisTemplate.opsForValue().setIfAbsent(roomPresenceVersionKey(code), "0", roomStateTtl);
                     expireRoomKeys(code);
                     return null;
                 },
@@ -389,6 +393,7 @@ public class EphemeralRoomStateService {
                     redisTemplate.delete(roomMetaKey(code));
                     redisTemplate.delete(roomAnnotationsKey(code));
                     redisTemplate.delete(roomColorCursorKey(code));
+                    redisTemplate.delete(roomPresenceVersionKey(code));
                     return null;
                 },
                 () -> {
@@ -488,6 +493,36 @@ public class EphemeralRoomStateService {
         );
     }
 
+    public List<ActiveMember> activeMembers(String code) {
+        return executeWithFallback(
+                () -> activeRedisMembers(code),
+                () -> {
+                    LocalRoomState state = localRooms.get(code);
+                    if (state == null) {
+                        return List.of();
+                    }
+                    pruneExpiredLocalMembers(code, state, false);
+                    Map<String, ActiveMember> byUserId = new java.util.TreeMap<>();
+                    state.members.values().forEach(member -> byUserId.putIfAbsent(
+                            member.userId,
+                            new ActiveMember(member.userId, member.displayName, member.cursorColor)
+                    ));
+                    return new ArrayList<>(byUserId.values());
+                }
+        );
+    }
+
+    public long nextPresenceVersion(String code) {
+        return executeWithFallback(
+                () -> {
+                    Long version = redisTemplate.opsForValue().increment(roomPresenceVersionKey(code));
+                    redisTemplate.expire(roomPresenceVersionKey(code), roomStateTtl);
+                    return version == null ? 0L : version;
+                },
+                () -> localState(code).presenceVersion.incrementAndGet()
+        );
+    }
+
     @Scheduled(fixedDelay = 60_000)
     void expireStaleRooms() {
         executeWithFallback(
@@ -496,9 +531,6 @@ public class EphemeralRoomStateService {
                         int count = pruneExpiredRedisMembers(code, false);
                         if (count <= 0) {
                             markRoomInactive(code);
-                            if (vacancyExpired(code)) {
-                                deleteRoom(code);
-                            }
                         }
                     }
                     return null;
@@ -508,12 +540,42 @@ public class EphemeralRoomStateService {
                         int count = pruneExpiredLocalMembers(entry.getKey(), entry.getValue(), false);
                         if (count <= 0) {
                             markRoomInactive(entry.getKey());
-                            if (localVacancyExpired(entry.getValue())) {
-                                localRooms.remove(entry.getKey());
-                            }
                         }
                     }
                     return null;
+                }
+        );
+    }
+
+    public boolean emptyRoomGraceExpired(String code) {
+        return executeWithFallback(
+                () -> vacancyExpired(code),
+                () -> {
+                    LocalRoomState state = localRooms.get(code);
+                    return state != null && localVacancyExpired(state);
+                }
+        );
+    }
+
+    public Set<String> cleanupReadyRoomCodes() {
+        return executeWithFallback(
+                () -> {
+                    Set<String> ready = new HashSet<>();
+                    for (String code : findKnownRoomCodes()) {
+                        if (activeRedisMembers(code).isEmpty() && vacancyExpired(code)) {
+                            ready.add(code);
+                        }
+                    }
+                    return ready;
+                },
+                () -> {
+                    Set<String> ready = new HashSet<>();
+                    for (Map.Entry<String, LocalRoomState> entry : localRooms.entrySet()) {
+                        if (countUniqueLocalUsers(entry.getValue()) == 0 && localVacancyExpired(entry.getValue())) {
+                            ready.add(entry.getKey());
+                        }
+                    }
+                    return ready;
                 }
         );
     }
@@ -703,7 +765,7 @@ public class EphemeralRoomStateService {
         }
 
         long now = System.currentTimeMillis();
-        Map<String, ActiveMember> byUserId = new ConcurrentHashMap<>();
+        Map<String, ActiveMember> byUserId = new java.util.TreeMap<>();
         for (Map.Entry<Object, Object> entry : entries.entrySet()) {
             String presenceId = String.valueOf(entry.getKey());
             MemberPresence presence = decodePresence(String.valueOf(entry.getValue()), presenceId);
@@ -864,6 +926,7 @@ public class EphemeralRoomStateService {
         redisTemplate.expire(roomRecentMembersKey(code), roomStateTtl);
         redisTemplate.expire(roomAnnotationsKey(code), roomStateTtl);
         redisTemplate.expire(roomColorCursorKey(code), roomStateTtl);
+        redisTemplate.expire(roomPresenceVersionKey(code), roomStateTtl);
     }
 
     private int randomIndex(int upperBound) {
@@ -892,6 +955,10 @@ public class EphemeralRoomStateService {
 
     private String roomColorCursorKey(String code) {
         return prefixedKey("room:" + code + ":color-cursor");
+    }
+
+    private String roomPresenceVersionKey(String code) {
+        return prefixedKey("room:" + code + ":presence-version");
     }
 
     private String prefixedKey(String key) {
@@ -972,6 +1039,7 @@ public class EphemeralRoomStateService {
         private final Map<String, String> annotations = new ConcurrentHashMap<>();
         private final AtomicInteger memberCount = new AtomicInteger(0);
         private final AtomicInteger colorCursor = new AtomicInteger(0);
+        private final AtomicLong presenceVersion = new AtomicLong(0);
         private volatile OffsetDateTime createdAt;
         private volatile OffsetDateTime vacantSince;
         private volatile boolean active;

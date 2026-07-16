@@ -1,6 +1,7 @@
 package com.pearprogram.realtime;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 
 public record MemberEvent(
         String type,
@@ -14,6 +15,8 @@ public record MemberEvent(
         String targetUserId,
         String targetUserName,
         Boolean locked,
-        OffsetDateTime at
+        OffsetDateTime at,
+        List<PresenceMember> members,
+        Long presenceVersion
 ) {
 }

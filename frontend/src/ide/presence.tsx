@@ -3,7 +3,7 @@ import type { MentionOption } from '../components/chat/ChatPanel';
 import type { Member } from '../types';
 
 export type MemberRealtimeEvent = {
-  type: 'joined' | 'left' | 'presence-sync' | 'lead-sync' | 'lead-transferred' | 'lead-removed' | 'lock-changed' | 'room-closed';
+  type: 'joined' | 'left' | 'presence-sync' | 'presence-snapshot' | 'lead-sync' | 'lead-transferred' | 'lead-removed' | 'lock-changed' | 'room-closed';
   userId: string;
   sessionId?: string;
   connectionId?: string;
@@ -15,7 +15,34 @@ export type MemberRealtimeEvent = {
   targetUserName?: string;
   locked?: boolean;
   at?: string;
+  members?: Array<{ userId: string; displayName: string; color: string }>;
+  presenceVersion?: number;
 };
+
+export function reconcilePresenceSnapshot(
+  event: MemberRealtimeEvent,
+  currentVersion: number,
+  currentUserId: string,
+  currentMembers: Record<string, Member> = {}
+) {
+  const version = event.presenceVersion ?? 0;
+  if (event.type !== 'presence-snapshot' || !Array.isArray(event.members) || version <= currentVersion) {
+    return null;
+  }
+
+  const members: Record<string, Member> = {};
+  for (const member of event.members) {
+    if (!member.userId || member.userId === currentUserId) continue;
+    const avatarUrl = currentMembers[member.userId]?.avatarUrl;
+    members[member.userId] = {
+      id: member.userId,
+      name: member.displayName || 'Guest',
+      color: member.color || '#378ADD',
+      ...(avatarUrl ? { avatarUrl } : {})
+    };
+  }
+  return { members, version };
+}
 
 export function buildMentionOptions(members: Member[]): MentionOption[] {
   const totals = new Map<string, number>();

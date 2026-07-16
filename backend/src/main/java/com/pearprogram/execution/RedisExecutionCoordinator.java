@@ -49,6 +49,8 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
             redis.call('PEXPIRE', KEYS[3], ARGV[4])
             redis.call('ZADD', KEYS[4], ARGV[7], ARGV[1])
             redis.call('ZADD', KEYS[5], ARGV[7], ARGV[1])
+            redis.call('SADD', KEYS[6], ARGV[1])
+            redis.call('PEXPIRE', KEYS[6], ARGV[4])
             redis.call('PEXPIRE', KEYS[5], '61000')
             return {ARGV[1], '1'}
             """, List.class);
@@ -188,7 +190,7 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
         try {
             List<?> result = redis.execute(CREATE, List.of(
                             idempotencyKey(job.roomCode(), job.ownerUserId(), idempotencyKey), recordKey(job.executionId()),
-                            jobKey(job.executionId()), queueKey(), rateKey(job.roomCode(), job.ownerUserId())),
+                            jobKey(job.executionId()), queueKey(), rateKey(job.roomCode(), job.ownerUserId()), roomExecutionsKey(job.roomCode())),
                     job.executionId().toString(), Long.toString(now - 60_000), Integer.toString(Math.max(1, rateLimitPerMinute)),
                     Long.toString(ttl.toMillis()), job.roomCode(), job.ownerUserId(), Long.toString(now),
                     Integer.toString(job.languageId()), job.sourceCode(), job.stdin(), Long.toString(job.deadline().toEpochMilli()),
@@ -305,6 +307,28 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
         }
     }
 
+    @Override
+    public void cleanupRoom(String roomCode) {
+        try {
+            Set<String> executionIds = redis.opsForSet().members(roomExecutionsKey(roomCode));
+            if (executionIds != null) {
+                for (String rawId : executionIds) {
+                    try {
+                        UUID id = UUID.fromString(rawId);
+                        redis.opsForZSet().remove(queueKey(), rawId);
+                        redis.opsForZSet().remove(leasesKey(), rawId);
+                        redis.delete(List.of(jobKey(id), recordKey(id)));
+                    } catch (IllegalArgumentException ignored) {
+                        // Ignore malformed stale set members while clearing the room index.
+                    }
+                }
+            }
+            redis.delete(roomExecutionsKey(roomCode));
+        } catch (DataAccessException exception) {
+            warnBackgroundUnavailable("room-cleanup", exception);
+        }
+    }
+
     private ExecutionResponse toResponse(Map<Object, Object> map) {
         return new ExecutionResponse(UUID.fromString(get(map, "id")), ExecutionStatus.valueOf(get(map, "status")),
                 nullable(map, "stdout"), nullable(map, "stderr"), nullable(map, "compileOutput"), integer(map, "exitCode"),
@@ -329,6 +353,7 @@ class RedisExecutionCoordinator implements ExecutionCoordinator {
     private String leasesKey() { return prefix + ":leases"; }
     private String idempotencyKey(String room, String user, String key) { return prefix + ":idempotency:" + digest(room + ":" + user + ":" + key); }
     private String rateKey(String room, String user) { return prefix + ":rate:" + digest(room + ":" + user); }
+    private String roomExecutionsKey(String room) { return prefix + ":room:" + room + ":executions"; }
 
     private static <T> DefaultRedisScript<T> script(String source, Class<T> type) { return new DefaultRedisScript<>(source, type); }
     private static boolean one(Long value) { return value != null && value == 1; }

@@ -2,6 +2,7 @@ package com.pearprogram.rooms;
 
 import com.pearprogram.workspaces.WorkspaceDto;
 import com.pearprogram.workspaces.WorkspaceService;
+import com.pearprogram.execution.ExecutionCleanupService;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,7 @@ public class RoomService {
     private final RoomRepository rooms;
     private final RoomMemberRepository roomMembers;
     private final WorkspaceService workspaces;
+    private final ExecutionCleanupService executions;
     private final Duration cleanupGrace;
     private final Map<String, Instant> pendingCleanup = new ConcurrentHashMap<>();
 
@@ -40,6 +42,7 @@ public class RoomService {
             RoomRepository rooms,
             RoomMemberRepository roomMembers,
             WorkspaceService workspaces,
+            ExecutionCleanupService executions,
             @Value("${pearprogram.rooms.cleanup-grace-seconds:120}") long cleanupGraceSeconds
     ) {
         this.roomCodeGenerator = roomCodeGenerator;
@@ -48,7 +51,8 @@ public class RoomService {
         this.rooms = rooms;
         this.roomMembers = roomMembers;
         this.workspaces = workspaces;
-        this.cleanupGrace = Duration.ofSeconds(Math.max(30, cleanupGraceSeconds));
+        this.executions = executions;
+        this.cleanupGrace = Duration.ofSeconds(Math.max(0, cleanupGraceSeconds));
     }
 
     @Transactional
@@ -180,10 +184,11 @@ public class RoomService {
 
         Instant cleanupAt = pendingCleanup.computeIfAbsent(normalized, ignored -> Instant.now().plus(cleanupGrace));
         roomStateService.markRoomInactive(normalized);
-        if (Instant.now().isBefore(cleanupAt)) {
+        if (Instant.now().isBefore(cleanupAt) && !roomStateService.emptyRoomGraceExpired(normalized)) {
             return new RoomCleanupDto(normalized, false, "pending");
         }
 
+        executions.cleanupRoom(normalized);
         roomStateService.deleteRoom(normalized);
         pendingCleanup.remove(normalized);
         log.info("Cleaned ephemeral state for inactive room {}; durable room remains available", normalized);
@@ -200,6 +205,7 @@ public class RoomService {
         }
 
         room.close();
+        executions.cleanupRoom(normalized);
         roomStateService.deleteRoom(normalized);
         workspaces.deleteWorkspace(room.getWorkspaceId());
         pendingCleanup.remove(normalized);
@@ -215,6 +221,9 @@ public class RoomService {
                 continue;
             }
             cleanupIfEmpty(entry.getKey());
+        }
+        for (String code : roomStateService.cleanupReadyRoomCodes()) {
+            cleanupIfEmpty(code);
         }
     }
 
