@@ -29,9 +29,12 @@ export function reconcileEditorTabs({
   const openFileIds = openUploaded && requestedOpenIds.length === 0 && nextFiles[0]
     ? [nextFiles[0].id]
     : requestedOpenIds;
+  const previousActiveIndex = currentActiveFileId ? currentOpenFileIds.indexOf(currentActiveFileId) : -1;
   const activeFileId = openUploaded
     ? uploadedIds[0] ?? openFileIds[0] ?? null
-    : openFileIds.includes(currentActiveFileId ?? '') ? currentActiveFileId : openFileIds[0] ?? null;
+    : openFileIds.includes(currentActiveFileId ?? '')
+      ? currentActiveFileId
+      : openFileIds[Math.max(0, previousActiveIndex)] ?? openFileIds[Math.max(0, previousActiveIndex - 1)] ?? null;
 
   return { activeFileId, openFileIds };
 }

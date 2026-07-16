@@ -56,9 +56,11 @@ import {
   configureFolderInput,
   createLocalFile,
   createLocalFileFromCandidate,
+  filterTombstonedFileUpdates,
   foldersForPaths,
   isUuid,
   mergeFiles,
+  removeTreePath,
   resolveCreateItemTarget,
   sortByPath,
   uniqueStrings,
@@ -219,6 +221,7 @@ export function IDEApplication() {
   const pendingContentSyncRef = useRef<{ fileId: string; content: string; updatedAt: string } | null>(null);
   const lastLocalEditAtRef = useRef(0);
   const seedingFileIdsRef = useRef<Set<string>>(new Set());
+  const deletedFileIdsRef = useRef<Set<string>>(new Set());
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
@@ -818,6 +821,7 @@ export function IDEApplication() {
     const sortedFiles = nextFiles.sort(sortByPath);
     const tabState = restoreEditorTabs(sortedFiles, restoredState?.openFileIds, restoredState?.activeFileId);
     filesRef.current = sortedFiles;
+    deletedFileIdsRef.current.clear();
     setRoom(nextRoom);
     setFiles(sortedFiles);
     applyTabState(tabState);
@@ -1265,14 +1269,23 @@ export function IDEApplication() {
   }
 
   function applyUploadedFiles(uploaded: WorkspaceFile[], replaceExisting: boolean, openUploaded = true) {
-    const next = (replaceExisting ? uploaded : mergeFiles(filesRef.current, uploaded)).sort(sortByPath);
+    const safeUploaded = filterTombstonedFileUpdates(uploaded, deletedFileIdsRef.current);
+    const next = (replaceExisting ? safeUploaded : mergeFiles(filesRef.current, safeUploaded)).sort(sortByPath);
+    if (replaceExisting) {
+      const nextIds = new Set(next.map((file) => file.id));
+      for (const currentFile of filesRef.current) {
+        if (!nextIds.has(currentFile.id)) {
+          deletedFileIdsRef.current.add(currentFile.id);
+        }
+      }
+    }
     const tabState = reconcileEditorTabs({
       currentActiveFileId: activeFileIdRef.current,
       currentOpenFileIds: openFileIdsRef.current,
       nextFiles: next,
       openUploaded,
       replaceExisting,
-      uploadedFiles: uploaded
+      uploadedFiles: safeUploaded
     });
     filesRef.current = next;
     setFiles(next);
@@ -1282,12 +1295,13 @@ export function IDEApplication() {
   }
 
   function applyRemoteFileContentUpdates(incomingFiles: WorkspaceFile[]) {
-    if (incomingFiles.length === 0) {
+    const safeIncomingFiles = filterTombstonedFileUpdates(incomingFiles, deletedFileIdsRef.current);
+    if (safeIncomingFiles.length === 0) {
       return;
     }
 
-    const incomingById = new Map(incomingFiles.map((file) => [file.id, file]));
-    const incomingByPath = new Map(incomingFiles.map((file) => [file.path, file]));
+    const incomingById = new Map(safeIncomingFiles.map((file) => [file.id, file]));
+    const incomingByPath = new Map(safeIncomingFiles.map((file) => [file.path, file]));
     const appliedIncomingIds = new Set<string>();
     const activeId = activeFileIdRef.current;
     const hasRecentLocalEdit = Date.now() - lastLocalEditAtRef.current < 750;
@@ -1325,7 +1339,7 @@ export function IDEApplication() {
     });
 
     const existingIds = new Set(filesRef.current.map((file) => file.id));
-    for (const incoming of incomingFiles) {
+    for (const incoming of safeIncomingFiles) {
       if (!existingIds.has(incoming.id) && !appliedIncomingIds.has(incoming.id)) {
         nextFiles.push(incoming);
         changed = true;
@@ -1698,25 +1712,37 @@ export function IDEApplication() {
     });
   }
 
-  function deleteTreePath(path: string, kind: 'file' | 'folder') {
+  async function deleteTreePath(path: string, kind: 'file' | 'folder') {
     const currentFiles = filesRef.current;
-    const nextFiles = currentFiles.filter((file) => (
-      kind === 'folder' ? file.path !== path && !file.path.startsWith(`${path}/`) : file.path !== path
-    ));
-    if (nextFiles.length === currentFiles.length) {
+    const deletion = removeTreePath(currentFiles, path, kind);
+    if (deletion.removed.length === 0) {
       return;
     }
 
-    const label = kind === 'folder' ? path : basename(path);
-    if (!window.confirm(`Delete ${kind} "${label}" from this room?`)) {
+    const detail = kind === 'folder'
+      ? `folder "${path}" and ${deletion.removed.length} ${deletion.removed.length === 1 ? 'file' : 'files'}`
+      : `file "${path}"`;
+    if (!window.confirm(`Delete ${detail} from this room? This cannot be undone.`)) {
       return;
     }
 
-    const next = applyUploadedFiles(nextFiles, true, false);
-    persistRoomFilesSnapshot(next);
-    queueOrPublishProjectSwitch(createFileTreeEvent(next, true, false));
-    setSaveState('saved');
-    setLastSavedAt(new Date().toISOString());
+    const currentRoom = roomRef.current;
+    setSaveState('saving');
+    try {
+      const persisted = currentRoom && currentRoom.code !== FALLBACK_ROOM.code
+        ? await saveRoomFiles(currentRoom.code, deletion.files)
+        : deletion.files;
+      deletion.removed.forEach((file) => deletedFileIdsRef.current.add(file.id));
+      const next = applyUploadedFiles(persisted, true, false);
+      queueOrPublishProjectSwitch(createFileTreeEvent(next, true, false));
+      setSaveState('saved');
+      setLastSavedAt(new Date().toISOString());
+      showToast(`${kind === 'folder' ? 'Folder' : 'File'} deleted: ${path}`);
+    } catch (error) {
+      console.warn('Workspace deletion failed', { kind, path, roomCode: currentRoom?.code, error });
+      setSaveState('error');
+      showToast(`Could not delete ${kind} "${path}". Your files were not changed.`);
+    }
   }
 
   function expandForPath(path: string) {

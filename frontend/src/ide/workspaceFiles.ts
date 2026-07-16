@@ -44,6 +44,27 @@ export function mergeFiles(current: WorkspaceFile[], incoming: WorkspaceFile[]) 
   return [...byPath.values()];
 }
 
+export function filesMatchingTreePath(files: WorkspaceFile[], path: string, kind: 'file' | 'folder') {
+  return files.filter((file) => (
+    kind === 'folder'
+      ? file.path === path || file.path.startsWith(`${path}/`)
+      : file.path === path
+  ));
+}
+
+export function removeTreePath(files: WorkspaceFile[], path: string, kind: 'file' | 'folder') {
+  const removed = filesMatchingTreePath(files, path, kind);
+  const removedIds = new Set(removed.map((file) => file.id));
+  return {
+    files: files.filter((file) => !removedIds.has(file.id)),
+    removed
+  };
+}
+
+export function filterTombstonedFileUpdates(files: WorkspaceFile[], tombstonedFileIds: ReadonlySet<string>) {
+  return files.filter((file) => !tombstonedFileIds.has(file.id));
+}
+
 export function sortByPath(a: WorkspaceFile, b: WorkspaceFile) {
   return a.path.localeCompare(b.path);
 }

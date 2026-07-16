@@ -32,7 +32,7 @@ describe('editor tab reconciliation', () => {
       openUploaded: false,
       replaceExisting: true,
       uploadedFiles: [file('one'), file('three')]
-    })).toEqual({ activeFileId: 'one', openFileIds: ['one', 'three'] });
+    })).toEqual({ activeFileId: 'three', openFileIds: ['one', 'three'] });
   });
 
   it('handles restoring an empty workspace', () => {

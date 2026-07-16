@@ -90,8 +90,8 @@ export function useRoomEntry({ authReady, onOpenRoom, onToast, signIn, user }: U
         try {
           await joinRoom(savedSession.room.code);
           const freshRoom = await getRoom(savedSession.room.code);
-          const roomFiles = await getRoomFiles(savedSession.room.code).catch(() => savedSession.files);
-          onOpenRoomRef.current(freshRoom, roomFiles.length > 0 ? roomFiles : savedSession.files, false, savedSession);
+          const roomFiles = await getRoomFiles(savedSession.room.code);
+          onOpenRoomRef.current(freshRoom, roomFiles, false, savedSession);
         } catch {
           onToastRef.current('Restored your room locally while the hosted services reconnect.');
         }
