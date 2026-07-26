@@ -13,11 +13,9 @@ Pear Programming is a real-time collaborative browser IDE for pair programming. 
 ## Preview
 
 <p align="center">
-  <a href="assets/pear-program-demo.mp4">
-    <img src="assets/pear-program-demo.gif" alt="Pear Programming collaborative IDE live demo" width="800">
-  </a>
+  <img src="assets/pear-program-demo.gif" alt="Pear Programming collaborative IDE live demo" width="800">
   <br>
-  <em>See room creation, collaborative editing, chat, and code execution in action. Click for the full-quality video.</em>
+  <em>See room creation, collaborative editing, chat, and code execution in action.</em>
 </p>
 
 ## Architecture
